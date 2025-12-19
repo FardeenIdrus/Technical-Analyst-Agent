@@ -1,0 +1,29 @@
+# Virtual Environment
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment variables
+.env
+
+# Data files
+data/raw/*.csv
+data/processed/*.csv
+
+# Outputs
+outputs/*.md
+outputs/*.json
+outputs/*.png
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
