@@ -39,7 +39,7 @@ class DataCollector:
             DataFrame with OHLCV data
         """
         
-        print(f"\n📥 Downloading {years} years of data for {ticker}...")
+        print(f"\n Downloading {years} years of data for {ticker}...")
         
         # Calculate start date by subtracting years from today
         end_date = datetime.now()
@@ -103,7 +103,7 @@ class DataCollector:
             
         except Exception as e:
             # Catch any errors (network issues, invalid ticker, etc.)
-            print(f"❌ Error downloading data for {ticker}: {e}")
+            print(f" Error downloading data for {ticker}: {e}")
             raise
     
     def load_data(self, ticker, years=10, interval='1d'):
@@ -202,7 +202,7 @@ class DataCollector:
         }
         
         # Print validation summary
-        print("\n🔍 Data Validation:")
+        print("\n Data Validation:")
         print(f"  Total rows: {validation['total_rows']}")
         print(f"  Date range: {validation['date_range']}")
         print(f"  Missing values: {sum(validation['missing_values'].values())}")
@@ -223,7 +223,7 @@ if __name__ == "__main__":
     collector = DataCollector()
     
     # Test with S&P 500 ETF (SPY) - most liquid, reliable data
-    ticker = "SPY"
+    ticker = "AAPL"
     
     # Download 10 years of daily data
     data = collector.download_data(ticker, years=10, interval='1d')
@@ -232,12 +232,12 @@ if __name__ == "__main__":
     validation = collector.validate_data(data)
     
     # Show sample of data
-    print("\n📊 First 5 rows:")
+    print("\n First 5 rows:")
     print(data.head())
     
-    print("\n📊 Last 5 rows:")
+    print("\n Last 5 rows:")
     print(data.tail())
     
     # Show statistical summary (min, max, mean, std dev)
-    print("\n📊 Basic statistics:")
+    print("\n Basic statistics:")
     print(data.describe())
