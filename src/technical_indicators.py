@@ -9,6 +9,8 @@ Calculates 6 key technical indicators for trading strategies:
 6. Volume Moving Average - Volume confirmation
 """
 
+#TO DO: Address limitations of MACD by adding indicators like ADX or DMI or Stochastic Oscillator for better trend strength and momentum analysis.
+#Bollinger Bands are often more effective when used with other indicators, such as volume or momentum oscillators
 import pandas as pd
 import numpy as np
 
@@ -53,6 +55,7 @@ class TechnicalIndicators:
         self.calculate_bollinger_bands()
         self.calculate_atr()
         self.calculate_volume_ma()
+        self.calculate_adx()
 
         # Add some useful derived signals
         self._calculate_derived_signals()
@@ -84,6 +87,7 @@ class TechnicalIndicators:
         Returns:
             RSI Series (values 0-100)
         """
+        
         # Calculate daily price changes (today's close - yesterday's close)
         delta = self.data['Close'].diff()
 
@@ -384,6 +388,93 @@ class TechnicalIndicators:
 
         return volume_ma
 
+    # =========================================================================
+    # INDICATOR 7: ADX(Average Directional Index) 
+    # =========================================================================
+    def calculate_adx(self, period: int = 14) -> pd.DataFrame:
+            """
+            Calculate ADX (Average Directional Index) and DI+/DI-.
+
+            ADX measures TREND STRENGTH (not direction). Solves MACD's weakness
+            of giving false signals in sideways markets.
+
+            Components:
+            - +DI (Plus Directional Indicator): Measures upward movement strength
+            - -DI (Minus Directional Indicator): Measures downward movement strength
+            - ADX: Smoothed average of DI difference (trend strength)
+
+            Trading Signals:
+            - ADX < 20: No trend (AVOID using MACD signals - choppy market)
+            - ADX 20-40: Trending (MACD signals are valid)
+            - ADX > 40: Strong trend (high confidence in trend signals)
+            - +DI crosses above -DI: Bullish signal
+            - -DI crosses above +DI: Bearish signal
+
+            Args:
+                period: Lookback period (standard: 14)
+
+            Returns:
+                DataFrame with ADX, +DI, -DI columns
+            """
+            high = self.data['High']
+            low = self.data['Low']
+            close = self.data['Close']
+
+            # Step 1: Calculate +DM and -DM (Directional Movement)
+            high_diff = high.diff()
+            low_diff = low.shift(1) - low
+
+            # +DM: Positive when today's high exceeds yesterday's high
+            plus_dm = high_diff.copy()
+            plus_dm[plus_dm < 0] = 0
+            plus_dm[(high_diff < low_diff)] = 0
+
+            # -DM: Positive when today's low is below yesterday's low
+            minus_dm = low_diff.copy()
+            minus_dm[minus_dm < 0] = 0
+            minus_dm[(low_diff < high_diff)] = 0
+
+            # Step 2: Calculate True Range
+            prev_close = close.shift(1)
+            tr1 = high - low
+            tr2 = (high - prev_close).abs()
+            tr3 = (low - prev_close).abs()
+            true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+            # Step 3: Smooth +DM, -DM, and TR using EMA
+            atr = true_range.ewm(span=period, adjust=False).mean()
+            plus_dm_smooth = plus_dm.ewm(span=period, adjust=False).mean()
+            minus_dm_smooth = minus_dm.ewm(span=period, adjust=False).mean()
+
+            # Step 4: Calculate +DI and -DI
+            plus_di = 100 * (plus_dm_smooth / atr)
+            minus_di = 100 * (minus_dm_smooth / atr)
+
+            # Step 5: Calculate DX (Directional Index)
+            di_sum = plus_di + minus_di
+            di_diff = (plus_di - minus_di).abs()
+            dx = 100 * (di_diff / di_sum.replace(0, 1))
+
+            # Step 6: Calculate ADX (smoothed DX)
+            adx = dx.ewm(span=period, adjust=False).mean()
+
+            # Store in DataFrame
+            self.data['ADX'] = adx
+            self.data['Plus_DI'] = plus_di
+            self.data['Minus_DI'] = minus_di
+
+            # Add trend strength zone: 0 = No trend, 1 = Trending, 2 = Strong trend
+            self.data['ADX_Trend_Strength'] = np.select(
+                [adx < 20, adx < 40, adx >= 40],
+                [0, 1, 2],
+                default=0
+            )
+
+            return pd.DataFrame({
+                'ADX': adx,
+                'Plus_DI': plus_di,
+                'Minus_DI': minus_di
+            })
     # =========================================================================
     # DERIVED SIGNALS (Useful combinations)
     # =========================================================================
