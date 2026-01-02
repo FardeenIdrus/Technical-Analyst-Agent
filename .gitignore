@@ -12,9 +12,11 @@ __pycache__/
 # Environment variables
 .env
 
-# Data files
-data/raw/*.csv
-data/processed/*.csv
+# Data files (downloaded/cached data - regenerable)
+data/raw/
+data/processed/
+*.parquet
+*.csv
 
 # Outputs
 outputs/*.md
