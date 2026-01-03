@@ -1,6 +1,6 @@
 """
 Data Collection Module
-Downloads historical OHLCV data for backtesting with advanced validation and caching
+Downloads historical OHLCV data for backtesting with validation and caching
 """
 
 import yfinance as yf
@@ -51,7 +51,7 @@ class DataCollector:
         Download historical OHLCV data.
 
         Args:
-            ticker: Stock ticker symbol (e.g., 'SPY', 'AAPL')
+            ticker: Stock ticker symbol 
             years: How many years of historical data to download
             interval: Data frequency ('1d' = daily, '1h' = hourly, '1wk' = weekly)
 
@@ -106,10 +106,10 @@ class DataCollector:
 
             # Warn user if any rows were removed
             if rows_removed > 0:
-                print(f"⚠️  Removed {rows_removed} rows with missing data")
+                print(f" Removed {rows_removed} rows with missing data")
 
             # Show download summary
-            print(f"✓ Downloaded {len(data)} trading days")
+            print(f" Downloaded {len(data)} trading days")
             print(f"  Date Range: {data.index[0].date()} to {data.index[-1].date()}")
             print(f"  Columns: {list(data.columns)}")
 
@@ -120,7 +120,7 @@ class DataCollector:
             # Save metadata for version tracking
             self._save_metadata(ticker, years, interval)
 
-            print(f"✓ Saved to: {filepath}")
+            print(f" Saved to: {filepath}")
 
             return data
 
@@ -153,11 +153,11 @@ class DataCollector:
 
         # Check cache validity
         if not self._is_cache_valid(ticker, years, interval):
-            print("⚠️  Cache outdated, recommend re-downloading with force_download=True")
+            print(" Cache outdated, recommend re-downloading with force_download=True")
 
         # Load data based on format
         data = self._load_data(filepath)
-        print(f"✓ Loaded {len(data)} days from {filepath}")
+        print(f" Loaded {len(data)} days from {filepath}")
 
         return data
 
