@@ -68,7 +68,7 @@ class RegimeState:
 
 class RegimeDetector:
     """
-    Advanced regime detection using multiple statistical methods.
+    Regime detection using multiple statistical methods.
 
     Methods:
     1. Hurst Exponent (R/S Analysis) - Measures trend persistence
@@ -111,7 +111,7 @@ class RegimeDetector:
     # =========================================================================
     # METHOD 1: HURST EXPONENT (R/S Analysis)
     # =========================================================================
-    def calculate_hurst_exponent(self, window: int = 100, min_window: int = 20) -> pd.Series:
+    def calculate_hurst_exponent(self, window: int = 200, min_window: int = 20) -> pd.Series:
         """
         Calculate rolling Hurst Exponent using Rescaled Range (R/S) analysis.
 
@@ -246,7 +246,7 @@ class RegimeDetector:
 
         Compares short-term variance to long-term variance to identify
         statistically significant changes in volatility regime.
-
+  
         Method:
         1. Calculate short-term rolling variance (recent volatility)
         2. Calculate long-term rolling variance (baseline volatility)
@@ -423,13 +423,14 @@ class RegimeDetector:
             di_direction = ma_crossover
 
         # Composite trend score (-100 to +100)
-        # Weight: ADX direction (30%), Price vs MAs (30%), MA crossover (20%), Momentum (20%)
+        # Weight: ADX direction (25%), Price vs MAs (15%), MA crossover (15%), Momentum (20%)
         trend_direction = (
-            0.3 * di_direction +
+            0.25 * di_direction +
             0.15 * price_vs_short +
             0.15 * price_vs_long +
-            0.2 * ma_crossover +
-            0.2 * momentum_normalized
+            0.15 * ma_slope_normalized +
+            0.15 * ma_crossover +
+            0.15 * momentum_normalized
         )
 
         # Scale by ADX strength (stronger ADX = more confident in direction)
@@ -451,13 +452,19 @@ class RegimeDetector:
     def get_market_regime(self, trend_score: float, volatility_regime: VolatilityRegime,
                           hurst: float) -> MarketRegime:
         """
-        Classify market regime based on trend score and other factors.
-
+        Classify market regime for a SINGLE observation.
+    
+        Note: For bulk classification of entire DataFrame, use _classify_regimes()
+        which is 100x faster via vectorization. This function is useful for:
+        - Unit testing
+        - Manual classification
+        - Real-time single-point classification
+        
         Args:
             trend_score: Composite trend score (-100 to +100)
             volatility_regime: Current volatility regime
             hurst: Hurst exponent
-
+        
         Returns:
             MarketRegime enum value
         """
@@ -695,24 +702,24 @@ class RegimeDetector:
             vol_adjust = "Normal position sizing"
 
         summary = f"""
-=== REGIME DETECTION SUMMARY ===
-Date: {self.data.index[-1].date() if hasattr(self.data.index[-1], 'date') else 'N/A'}
+            === REGIME DETECTION SUMMARY ===
+            Date: {self.data.index[-1].date() if hasattr(self.data.index[-1], 'date') else 'N/A'}
 
-MARKET REGIME: {state.market_regime.value}
-  Trend Strength: {state.trend_strength:.1f}/100
-  Confidence: {state.regime_confidence:.1%}
+            MARKET REGIME: {state.market_regime.value}
+            Trend Strength: {state.trend_strength:.1f}/100
+            Confidence: {state.regime_confidence:.1%}
 
-VOLATILITY REGIME: {state.volatility_regime.value}
-  Volatility Percentile: {state.volatility_percentile:.1f}%
+            VOLATILITY REGIME: {state.volatility_regime.value}
+            Volatility Percentile: {state.volatility_percentile:.1f}%
 
-TREND PERSISTENCE: {state.trend_persistence.value}
-  Hurst Exponent: {state.hurst_exponent:.3f}
-  Interpretation: {hurst_interp}
+            TREND PERSISTENCE: {state.trend_persistence.value}
+            Hurst Exponent: {state.hurst_exponent:.3f}
+            Interpretation: {hurst_interp}
 
-STRATEGY RECOMMENDATION:
-  Primary: {strategy}
-  Position Sizing: {vol_adjust}
-"""
+            STRATEGY RECOMMENDATION:
+            Primary: {strategy}
+            Position Sizing: {vol_adjust}
+            """
         return summary
 
     def get_regime_probabilities(self) -> Dict[str, float]:
