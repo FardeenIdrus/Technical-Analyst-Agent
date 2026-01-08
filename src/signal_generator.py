@@ -214,7 +214,7 @@ class SignalGenerator:
         # MACD Signal
         macd = self.data['MACD'].values
         macd_sig = self.data['MACD_Signal'].values
-        macd_hist = self.data.get('MACD_Histogram', macd - macd_sig).values
+        macd_hist = macd - macd_sig  # MACD_Histogram is just MACD - Signal
 
         macd_signal = np.where(
             (macd > macd_sig) & (macd_hist > 0), 1,  # Bullish crossover + positive histogram
@@ -249,24 +249,37 @@ class SignalGenerator:
         if 'BB_Percent_B' in self.data.columns:
             bb_pct = self.data['BB_Percent_B'].values
 
-            # For trend-following: ride the bands
-            # For mean-reversion: fade the bands
-            for strat, thresh in self.THRESHOLDS.items():
-                if strat == 'trending':
-                    mask = strategy == Strategy.TREND_FOLLOWING.value
-                    # In trends, breakout above upper band is bullish
-                    bb_signal[mask & (bb_pct > thresh['bb_upper'])] = 1
-                    bb_signal[mask & (bb_pct < thresh['bb_lower'])] = -1
-                elif strat == 'mean_reverting':
-                    mask = strategy == Strategy.MEAN_REVERSION.value
-                    # In mean-reversion, fade the extremes
-                    bb_signal[mask & (bb_pct > thresh['bb_upper'])] = -1  # Overbought, sell
-                    bb_signal[mask & (bb_pct < thresh['bb_lower'])] = 1   # Oversold, buy
-                elif strat == 'defensive':
-                    mask = strategy == Strategy.DEFENSIVE.value
-                    # Very conservative
-                    bb_signal[mask & (bb_pct > thresh['bb_upper'])] = -1
-                    bb_signal[mask & (bb_pct < thresh['bb_lower'])] = 1
+            # Get trend direction from regime detector
+            if 'Trend_Direction' in self.data.columns:
+                trend_direction = self.data['Trend_Direction'].values  # 1 = bullish, -1 = bearish
+            else:
+                trend_direction = np.zeros(n)
+
+            # Trend-following: Buy dips in uptrends, sell rallies in downtrends
+            trend_mask = strategy == Strategy.TREND_FOLLOWING.value
+            thresh = self.THRESHOLDS['trending']
+
+            # Uptrend (trend_direction > 0): buy when price dips to lower band
+            uptrend = trend_mask & (trend_direction > 0)
+            bb_signal[uptrend & (bb_pct < thresh['bb_lower'])] = 1  # Buy the dip
+            bb_signal[uptrend & (bb_pct > thresh['bb_upper'])] = 0  # Don't short in uptrend, just neutral
+
+            # Downtrend (trend_direction < 0): sell when price rallies to upper band
+            downtrend = trend_mask & (trend_direction < 0)
+            bb_signal[downtrend & (bb_pct > thresh['bb_upper'])] = -1  # Sell the rally
+            bb_signal[downtrend & (bb_pct < thresh['bb_lower'])] = 0   # Don't buy in downtrend, just neutral
+
+            # Mean-reversion: fade the extremes (unchanged)
+            mr_mask = strategy == Strategy.MEAN_REVERSION.value
+            thresh_mr = self.THRESHOLDS['mean_reverting']
+            bb_signal[mr_mask & (bb_pct > thresh_mr['bb_upper'])] = -1  # Overbought, sell
+            bb_signal[mr_mask & (bb_pct < thresh_mr['bb_lower'])] = 1   # Oversold, buy
+
+            # Defensive: very conservative, fade extremes
+            def_mask = strategy == Strategy.DEFENSIVE.value
+            thresh_def = self.THRESHOLDS['defensive']
+            bb_signal[def_mask & (bb_pct > thresh_def['bb_upper'])] = -1
+            bb_signal[def_mask & (bb_pct < thresh_def['bb_lower'])] = 1
 
         self.data['BB_Signal'] = bb_signal
 
@@ -351,13 +364,13 @@ class SignalGenerator:
         signal[(trend_mask) & (confluence <= -0.5)] = Signal.STRONG_SELL.value
         signal[(trend_mask) & (confluence <= -0.25) & (confluence > -0.5)] = Signal.SELL.value
 
-        # Mean-reversion strategy (opposite logic for extremes)
+        # Mean-reversion strategy: fade the extremes (buy oversold, sell overbought)
         mr_mask = strategy == Strategy.MEAN_REVERSION.value
 
-        signal[(mr_mask) & (confluence >= 0.5)] = Signal.STRONG_BUY.value
-        signal[(mr_mask) & (confluence >= 0.25) & (confluence < 0.5)] = Signal.BUY.value
-        signal[(mr_mask) & (confluence <= -0.5)] = Signal.STRONG_SELL.value
-        signal[(mr_mask) & (confluence <= -0.25) & (confluence > -0.5)] = Signal.SELL.value
+        signal[(mr_mask) & (confluence >= 0.5)] = Signal.STRONG_SELL.value   # Too bullish, fade it
+        signal[(mr_mask) & (confluence >= 0.25) & (confluence < 0.5)] = Signal.SELL.value
+        signal[(mr_mask) & (confluence <= -0.5)] = Signal.STRONG_BUY.value   # Too bearish, buy the dip
+        signal[(mr_mask) & (confluence <= -0.25) & (confluence > -0.5)] = Signal.BUY.value
 
         # Defensive strategy - very conservative, mostly hold
         def_mask = strategy == Strategy.DEFENSIVE.value
@@ -520,33 +533,33 @@ class SignalGenerator:
             risk = reward = rr_ratio = 0
 
         summary = f"""
-=== TRADING SIGNAL SUMMARY ===
-Date: {self.data.index[-1].date() if hasattr(self.data.index[-1], 'date') else 'N/A'}
-Price: ${signal.entry_price:.2f}
+            === TRADING SIGNAL SUMMARY ===
+            Date: {self.data.index[-1].date() if hasattr(self.data.index[-1], 'date') else 'N/A'}
+            Price: ${signal.entry_price:.2f}
 
-SIGNAL: {signal.signal.value}
-  Confidence: {signal.confidence:.1%}
-  Strategy: {signal.strategy.value}
-  Direction: {direction.upper()}
+            SIGNAL: {signal.signal.value}
+            Confidence: {signal.confidence:.1%}
+            Strategy: {signal.strategy.value}
+            Direction: {direction.upper()}
 
-INDICATOR CONFLUENCE:
-  Bullish indicators: {signal.indicators_bullish}
-  Bearish indicators: {signal.indicators_bearish}
-  Net score: {latest.get('Confluence_Score', 0):.2f}
+            INDICATOR CONFLUENCE:
+            Bullish indicators: {signal.indicators_bullish}
+            Bearish indicators: {signal.indicators_bearish}
+            Net score: {latest.get('Confluence_Score', 0):.2f}
 
-TRADE LEVELS:
-  Entry: ${signal.entry_price:.2f}
-  Stop Loss: ${signal.stop_loss:.2f} ({abs(signal.entry_price - signal.stop_loss) / signal.entry_price * 100:.1f}%)
-  Take Profit: ${signal.take_profit:.2f} ({abs(signal.take_profit - signal.entry_price) / signal.entry_price * 100:.1f}%)
-  Risk/Reward: 1:{rr_ratio:.1f}
+            TRADE LEVELS:
+            Entry: ${signal.entry_price:.2f}
+            Stop Loss: ${signal.stop_loss:.2f} ({abs(signal.entry_price - signal.stop_loss) / signal.entry_price * 100:.1f}%)
+            Take Profit: ${signal.take_profit:.2f} ({abs(signal.take_profit - signal.entry_price) / signal.entry_price * 100:.1f}%)
+            Risk/Reward: 1:{rr_ratio:.1f}
 
-POSITION SIZING:
-  Modifier: {signal.position_size_modifier:.2f}x
-  (Adjust base position by this factor)
+            POSITION SIZING:
+            Modifier: {signal.position_size_modifier:.2f}x
+            (Adjust base position by this factor)
 
-REASONING:
-  {signal.reasoning}
-"""
+            REASONING:
+            {signal.reasoning}
+            """
         return summary
 
     def get_signal_history(self, last_n: int = 30) -> pd.DataFrame:
