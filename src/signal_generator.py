@@ -300,11 +300,11 @@ class SignalGenerator:
         # Volume Confirmation (if available)
         vol_signal = np.zeros(n)
         if 'Volume_Ratio' in self.data.columns:
-            vol_ratio = self.data['Volume_Ratio'].values
-            daily_return = self.data['Close'].pct_change().values
-
+            vol_ratio = self.data['Volume_Ratio'].values # Today's volume / average volume
+            daily_return = self.data['Close'].pct_change().values # percentage price change
+ 
             # High volume confirms price direction
-            high_vol = vol_ratio > 1.5
+            high_vol = vol_ratio > 1.5 # Days with 50 % higher volume than average
             vol_signal[high_vol & (daily_return > 0)] = 1  # High vol + up = bullish
             vol_signal[high_vol & (daily_return < 0)] = -1  # High vol + down = bearish
 
@@ -426,10 +426,10 @@ class SignalGenerator:
 
         stop_loss = np.where(
             np.isin(signal, [Signal.STRONG_BUY.value, Signal.BUY.value]),
-            close - stop_distance,  # Long: stop below
+            close - stop_distance,  # Long: stop below entry
             np.where(
                 np.isin(signal, [Signal.STRONG_SELL.value, Signal.SELL.value]),
-                close + stop_distance,  # Short: stop above
+                close + stop_distance,  # Short: stop above entry
                 close  # Hold: no stop
             )
         )
@@ -515,13 +515,10 @@ class SignalGenerator:
 
         # Signal interpretation
         if signal.signal in [Signal.STRONG_BUY, Signal.BUY]:
-            action = "LONG"
             direction = "bullish"
         elif signal.signal in [Signal.STRONG_SELL, Signal.SELL]:
-            action = "SHORT"
             direction = "bearish"
         else:
-            action = "WAIT"
             direction = "neutral"
 
         # Risk/reward calculation
