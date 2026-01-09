@@ -12,6 +12,7 @@ import json
 import hashlib
 
 class DataCollector:
+       
     """
     Collects historical price data (OHLCV - Open, High, Low, Close, Volume)
     from Yahoo Finance for backtesting technical strategies.
@@ -542,6 +543,7 @@ if __name__ == "__main__":
 
     # Test with Apple stock
     ticker = "AAPL"
+    #ticker = "MSFT"
 
     # Download 10 years of daily data
     data = collector.download_data(ticker, years=10, interval='1d')

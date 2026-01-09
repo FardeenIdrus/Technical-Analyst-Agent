@@ -153,7 +153,7 @@ class WalkForwardResult:
     avg_oos_sharpe: float
     walk_forward_efficiency: float  # OOS Sharpe / IS Sharpe
 
-    # Combined OOS equity
+    # Combined OOS  equity
     combined_oos_return: float
     combined_oos_sharpe: float
     combined_oos_max_dd: float
@@ -317,8 +317,8 @@ class BacktestEngine:
         if end_date:
             data = data[data.index <= end_date]
 
-        if len(data) < 50:
-            raise ValueError(f"Insufficient data for backtest: {len(data)} rows")
+        if len(data) < self.config.min_test_periods:
+            raise ValueError(f"Insufficient data: {len(data)} rows, need {self.config.min_test_periods}")
 
         # Store filtered data for this run
         self._current_data = data
@@ -337,7 +337,7 @@ class BacktestEngine:
 
         if self.config.use_stop_loss and 'ATR' in data.columns:
             atr = data['ATR'].values
-            sl_stop = self.config.stop_loss_atr_mult * atr / close.values
+            sl_stop = self.config.stop_loss_atr_mult * atr / close.values #Exit if price drops by (2 × ATR) as a percentage of price.
 
         if self.config.use_take_profit and 'ATR' in data.columns:
             atr = data['ATR'].values
@@ -574,12 +574,13 @@ class BacktestEngine:
     # =========================================================================
     # BENCHMARK COMPARISON
     # =========================================================================
-    def compare_to_benchmark(self, benchmark: str = 'buy_hold') -> Dict[str, Any]:
+    def compare_to_benchmark(self, benchmark: str = 'buy_hold', spy_data: pd.DataFrame = None) -> Dict[str, Any]:
         """
         Compare strategy to benchmark.
 
         Args:
-            benchmark: 'buy_hold' or 'spy' (requires SPY data)
+            benchmark: 'buy_hold' or 'spy'
+            spy_data: Required if benchmark='spy'. DataFrame with SPY price data (must have 'Close' column)
 
         Returns:
             Dictionary with comparison metrics
@@ -590,7 +591,7 @@ class BacktestEngine:
         data = self._current_data if hasattr(self, '_current_data') else self.data
 
         if benchmark == 'buy_hold':
-            # Simple buy and hold
+            # Buy & hold: Buy on day 1, sell on last day (baseline for single-stock strategy)
             bh_return = (data['Close'].iloc[-1] / data['Close'].iloc[0]) - 1
             bh_returns = data['Close'].pct_change().dropna()
             bh_sharpe = (bh_returns.mean() * 252) / (bh_returns.std() * np.sqrt(252))
@@ -601,21 +602,59 @@ class BacktestEngine:
                 'sharpe_ratio': bh_sharpe,
                 'max_drawdown': bh_max_dd
             }
+
+        elif benchmark == 'spy':
+            # SPY benchmark: Compare against S&P 500 index (did we beat the market?)
+            if spy_data is None:
+                raise ValueError("spy_data required for SPY benchmark. Use DataCollector to fetch SPY data.")
+
+            if 'Close' not in spy_data.columns:
+                raise ValueError("spy_data must have 'Close' column")
+
+            # Align SPY data to strategy date range
+            start_date = data.index[0]
+            end_date = data.index[-1]
+            spy_aligned = spy_data.loc[start_date:end_date]
+
+            if len(spy_aligned) < 2:
+                raise ValueError(f"Insufficient SPY data for date range {start_date} to {end_date}")
+
+            # Calculate SPY metrics (same formulas as buy_hold)
+            spy_return = (spy_aligned['Close'].iloc[-1] / spy_aligned['Close'].iloc[0]) - 1
+            spy_returns = spy_aligned['Close'].pct_change().dropna()
+            spy_sharpe = (spy_returns.mean() * 252) / (spy_returns.std() * np.sqrt(252))
+            spy_max_dd = (spy_aligned['Close'] / spy_aligned['Close'].cummax() - 1).min()
+
+            benchmark_metrics = {
+                'total_return': spy_return,
+                'sharpe_ratio': spy_sharpe,
+                'max_drawdown': spy_max_dd
+            }
+
         else:
-            raise ValueError(f"Unknown benchmark: {benchmark}")
+            raise ValueError(f"Unknown benchmark: {benchmark}. Use 'buy_hold' or 'spy'")
 
-        # Calculate alpha and beta
+        # Calculate alpha and beta (CAPM metrics)
+        # Alpha = strategy excess return not explained by market exposure
+        # Beta = strategy sensitivity to benchmark movements
         strategy_returns = self.portfolio.returns()
-        benchmark_returns = data['Close'].pct_change().dropna()
 
-        # Align indices
+        # Use SPY returns for alpha/beta if SPY benchmark, otherwise use underlying asset
+        if benchmark == 'spy':
+            benchmark_returns = spy_aligned['Close'].pct_change().dropna()
+        else:
+            benchmark_returns = data['Close'].pct_change().dropna()
+
+        # Align strategy and benchmark returns to same dates
         common_idx = strategy_returns.index.intersection(benchmark_returns.index)
         strat_ret = strategy_returns.loc[common_idx]
         bench_ret = benchmark_returns.loc[common_idx]
 
         if len(common_idx) > 1:
+            # Beta = Cov(strategy, benchmark) / Var(benchmark)
             cov_matrix = np.cov(strat_ret, bench_ret)
             beta = cov_matrix[0, 1] / cov_matrix[1, 1] if cov_matrix[1, 1] != 0 else 1
+            # Alpha = annualized excess return after adjusting for beta
             alpha = (strat_ret.mean() - beta * bench_ret.mean()) * 252
         else:
             beta = 1
@@ -624,6 +663,7 @@ class BacktestEngine:
         return {
             'strategy': self.results.to_dict(),
             'benchmark': benchmark_metrics,
+            'benchmark_name': benchmark,  # Include which benchmark was used
             'alpha': alpha,
             'beta': beta,
             'excess_return': self.results.total_return - benchmark_metrics['total_return'],
@@ -726,7 +766,7 @@ if __name__ == "__main__":
 
     # Compare to buy & hold
     print("\n" + "="*50)
-    print("BENCHMARK COMPARISON")
+    print("BENCHMARK COMPARISON (Buy & Hold)")
     print("="*50)
     comparison = engine.compare_to_benchmark('buy_hold')
     print(f"Strategy Return: {comparison['strategy']['total_return']:.1%}")
@@ -734,6 +774,21 @@ if __name__ == "__main__":
     print(f"Excess Return: {comparison['excess_return']:.1%}")
     print(f"Alpha: {comparison['alpha']:.2%}")
     print(f"Beta: {comparison['beta']:.2f}")
+
+    # Compare to SPY (S&P 500)
+    # Load SPY data same way as AAPL - from cache if available, otherwise fetch
+    print("\n" + "="*50)
+    print("BENCHMARK COMPARISON (SPY)")
+    print("="*50)
+    # get_data() loads from cache if available, downloads if not
+    spy_data = collector.get_data('SPY', years=10)
+
+    spy_comparison = engine.compare_to_benchmark('spy', spy_data=spy_data)
+    print(f"Strategy Return: {spy_comparison['strategy']['total_return']:.1%}")
+    print(f"SPY Return: {spy_comparison['benchmark']['total_return']:.1%}")
+    print(f"Excess Return (vs market): {spy_comparison['excess_return']:.1%}")
+    print(f"Alpha (vs market): {spy_comparison['alpha']:.2%}")
+    print(f"Beta (market sensitivity): {spy_comparison['beta']:.2f}")
 
     # Walk-forward analysis
     print("\n" + "="*50)
