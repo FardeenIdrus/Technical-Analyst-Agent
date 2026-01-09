@@ -372,11 +372,12 @@ class SignalGenerator:
         signal[(mr_mask) & (confluence <= -0.5)] = Signal.STRONG_BUY.value   # Too bearish, buy the dip
         signal[(mr_mask) & (confluence <= -0.25) & (confluence > -0.5)] = Signal.BUY.value
 
-        # Defensive strategy - very conservative, mostly hold
+        # Defensive strategy - conservative but not paralyzed
+        # Threshold lowered from 0.67 to 0.5 (was unreachable since max confluence is 0.667)
         def_mask = strategy == Strategy.DEFENSIVE.value
 
-        signal[(def_mask) & (confluence >= 0.67)] = Signal.BUY.value  # Only strong signals
-        signal[(def_mask) & (confluence <= -0.67)] = Signal.SELL.value
+        signal[(def_mask) & (confluence >= 0.5)] = Signal.BUY.value   # Strong bullish confluence
+        signal[(def_mask) & (confluence <= -0.5)] = Signal.SELL.value  # Strong bearish confluence
 
         # Calculate confidence
         # Base confidence from confluence strength
