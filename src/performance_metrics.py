@@ -422,25 +422,32 @@ class PerformanceAnalyser:
             VaR as a negative percentage (loss)
         """
         if method == 'historical':
-            # Historical simulation
+            # Historical simulation: use actual past returns
+            # For 95% confidence, find the 5th percentile (bottom 5% of returns)
             return np.percentile(self.returns, (1 - confidence) * 100)
 
         elif method == 'parametric':
-            # Assumes normal distribution
+            # Parametric VaR: assumes returns follow a normal distribution (bell curve)
+            # Get z-score (standard deviations from mean for given confidence)
             z_score = stats.norm.ppf(1 - confidence)
+            # VaR = mean return + (z-score × volatility)
             return self.returns.mean() + z_score * self.returns.std()
 
         elif method == 'cornish_fisher':
-            # Adjusts for skewness and kurtosis
+            # Cornish-Fisher VaR: adjusts for non-normal distributions
+            # Real returns often have fat tails (extreme events) and skew (asymmetry)
+            # Get base z-score for normal distribution
             z = stats.norm.ppf(1 - confidence)
             s = stats.skew(self.returns)
             k = stats.kurtosis(self.returns)
 
-            # Cornish-Fisher expansion
-            z_cf = (z + (z**2 - 1) * s / 6 +
-                    (z**3 - 3*z) * (k - 3) / 24 -
-                    (2*z**3 - 5*z) * s**2 / 36)
+            # Cornish-Fisher expansion: adjusts z-score for skewness and kurtosis
+            # This makes VaR more accurate for non-normal returns
+            z_cf = (z + (z**2 - 1) * s / 6 +        # Skewness adjustment
+                    (z**3 - 3*z) * (k - 3) / 24 -   # Kurtosis adjustment
+                    (2*z**3 - 5*z) * s**2 / 36)     # Second-order skewness adjustment
 
+            # Calculate VaR using adjusted z-score
             return self.returns.mean() + z_cf * self.returns.std()
 
         else:
@@ -454,14 +461,18 @@ class PerformanceAnalyser:
 
         More conservative than VaR - captures tail risk.
         """
+        
+        # First calculate VaR (the threshold loss at given confidence)
         var = self.calculate_var(confidence, method='historical')
 
-        # Average of returns worse than VaR
+         # Find all returns that are worse than (or equal to) VaR
+        # These are the "tail events" - the worst 5% of days
         tail_returns = self.returns[self.returns <= var]
 
         if len(tail_returns) == 0:
             return var
 
+        # CVaR = average of all returns in the tail
         return tail_returns.mean()
 
     # =========================================================================
@@ -473,33 +484,35 @@ class PerformanceAnalyser:
 
         PSR measures the probability that the true Sharpe ratio exceeds
         a benchmark Sharpe ratio, accounting for estimation error.
-
-        From Bailey & Lopez de Prado (2012).
-
         Args:
             benchmark_sharpe: Sharpe ratio to compare against (default 0)
 
         Returns:
             Probability that true Sharpe > benchmark_sharpe
         """
-        n = len(self.returns)
-        sharpe = self.calculate_sharpe_ratio()
-        skew = stats.skew(self.returns)
-        kurt = stats.kurtosis(self.returns)
+        # Gather inputs for PSR calculation
+        n = len(self.returns) # Sample size (number of trading days)
+        sharpe = self.calculate_sharpe_ratio()  # Observed Sharpe from our data
+        skew = stats.skew(self.returns) # Asymmetry measure (0 = symmetric)
+        kurt = stats.kurtosis(self.returns) # Fat tails measure (0 = normal distribution)
 
-        # Standard error of Sharpe ratio estimate
-        # Accounts for non-normality via skewness and kurtosis
+        # Calculate standard error (uncertainty) of our Sharpe estimate
+        #  "How much might the true Sharpe differ from what we measured?"
+        # Formula accounts for:
+        # - Sample size (n): more data = less uncertainty
+        # - Non-normality: skewness and kurtosis increase uncertainty
         sharpe_std = np.sqrt(
             (1 + 0.5 * sharpe**2 - skew * sharpe + (kurt - 3) / 4 * sharpe**2) / (n - 1)
         )
-
+        # Edge case: if no uncertainty exists (shouldn't happen in practice)
         if sharpe_std == 0:
+            # If observed Sharpe > benchmark, we're 100% confident, else 0% confident
             return 1.0 if sharpe > benchmark_sharpe else 0.0
 
-        # Z-score for Sharpe being greater than benchmark
+        # Calculate z-score: "How many standard errors is our Sharpe above the benchmark?"
         z = (sharpe - benchmark_sharpe) / sharpe_std
 
-        # Probability (one-tailed)
+        # Convert z-score to probability using normal distribution
         return stats.norm.cdf(z)
 
     def calculate_deflated_sharpe_ratio(self) -> float:
@@ -508,10 +521,7 @@ class PerformanceAnalyser:
 
         Adjusts Sharpe ratio for multiple testing bias.
         When you test many strategies, some will look good by chance.
-        DSR penalizes for the number of trials.
-
-        From Bailey & Lopez de Prado (2014).
-
+        DSR penalises for the number of trials.
         Returns:
             Deflated Sharpe ratio accounting for multiple testing
         """
@@ -543,9 +553,9 @@ class PerformanceAnalyser:
         # Deflated Sharpe: compare observed vs expected under luck
         z = (sharpe - expected_max_sharpe) / sharpe_std
 
-        # Return as a Sharpe-like number (can be negative if overfitted)
+        # Return as a Sharpe number (can be negative if overfitted)
         # This represents the Sharpe ratio adjusted for selection bias
-        return stats.norm.cdf(z) * sharpe
+        return stats.norm.cdf(z)
 
     def calculate_sharpe_confidence_interval(self, confidence: float = 0.95) -> Tuple[float, float]:
         """
@@ -613,6 +623,9 @@ class PerformanceAnalyser:
     # =========================================================================
     def calculate_trade_statistics(self) -> Dict[str, float]:
         """Calculate detailed trade-level statistics."""
+        
+        #Handle case where no trade data is available
+        # Return zeros for all metrics if trades don't exist
         if self.trades is None or len(self.trades) == 0:
             return {
                 'total_trades': 0,
@@ -631,6 +644,7 @@ class PerformanceAnalyser:
             pnl_col = 'PnL'
         else:
             # No PnL data
+            # Return zeros for all metrics
             return {
                 'total_trades': len(self.trades),
                 'win_rate': 0.0,
@@ -641,6 +655,7 @@ class PerformanceAnalyser:
                 'avg_duration': 0.0
             }
 
+        # Extract profit/losses and separate winners/losers
         trades_pnl = self.trades[pnl_col]
         winners = trades_pnl[trades_pnl > 0]
         losers = trades_pnl[trades_pnl < 0]
@@ -674,9 +689,11 @@ class PerformanceAnalyser:
         Returns:
             Series of rolling Sharpe ratios
         """
+        
         rolling_mean = self.excess_returns.rolling(window=window).mean()
+        #For each day, calculate volatility over past 'window' days
         rolling_std = self.returns.rolling(window=window).std()
-
+        # Sharpe ratio at each point in time - annualised
         rolling_sharpe = (rolling_mean / rolling_std) * np.sqrt(self.TRADING_DAYS_PER_YEAR)
 
         return rolling_sharpe
@@ -831,6 +848,7 @@ class PerformanceAnalyser:
         # Strategy metrics
         strat_sharpe = self.calculate_sharpe_ratio()
         strat_cagr = self.calculate_cagr()
+        strat_max_dd, _, _ = self.calculate_max_drawdown()
 
         # Alpha and Beta (CAPM)
         if len(common_idx) > 1 and bench_ret.var() > 0:
@@ -853,6 +871,8 @@ class PerformanceAnalyser:
             'benchmark_sharpe': bench_sharpe,
             'strategy_cagr': strat_cagr,
             'benchmark_cagr': bench_cagr,
+            'strategy_max_dd': strat_max_dd,
+            'benchmark_max_dd': bench_max_dd,
             'alpha': alpha,
             'beta': beta,
             'information_ratio': information_ratio,
@@ -1025,7 +1045,7 @@ if __name__ == "__main__":
     print(f"\nQuick Metrics Test:")
     quick = quick_metrics(returns)
     for key, value in quick.items():
-        if 'return' in key or 'drawdown' in key or 'rate' in key:
+        if key in ['total_return', 'cagr', 'max_drawdown', 'win_rate', 'volatility']:
             print(f"  {key}: {value:.2%}")
         else:
             print(f"  {key}: {value:.2f}")
