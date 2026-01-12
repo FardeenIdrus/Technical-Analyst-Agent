@@ -26,6 +26,9 @@ import warnings
 
 import vectorbt as vbt
 
+# Import PositionSizer for advanced position sizing
+from position_sizer import PositionSizer
+
 # Suppress VectorBT warnings for cleaner output
 warnings.filterwarnings('ignore', category=FutureWarning)
 
@@ -46,7 +49,7 @@ class BacktestConfig:
     """Configuration for backtest parameters."""
     # Capital and sizing
     initial_capital: float = 100_000.0
-    position_size_pct: float = 0.10  # 10% of capital per trade
+    position_size_pct: float = 1.0  # 10% of capital per trade
     max_positions: int = 1  # Single position for now
 
     # Transaction costs
@@ -66,6 +69,13 @@ class BacktestConfig:
     walk_forward_ratio: float = 5.0  # 5:1 in-sample to out-of-sample
     min_train_periods: int = 252  # Minimum 1 year training
     min_test_periods: int = 63  # Minimum 3 months testing
+
+    # Advanced position sizing (PositionSizer integration)
+    use_position_sizer: bool = True  # Use PositionSizer for dynamic sizing
+    target_volatility: float = 0.30  # 30% annualized target volatility (matches typical stock vol)
+    max_portfolio_heat: float = 0.10  # 10% total capital at risk
+    max_per_trade_risk: float = 0.02  # 2% per trade
+    kelly_fraction: float = 0.25  # Quarter-Kelly for safety
 
 
 @dataclass
@@ -200,6 +210,20 @@ class BacktestEngine:
         self.portfolio = None
         self.results = None
 
+        # Initialize PositionSizer if enabled
+        self.position_sizer = None
+        if self.config.use_position_sizer:
+            self.position_sizer = PositionSizer(
+                target_volatility=self.config.target_volatility,
+                max_portfolio_heat=self.config.max_portfolio_heat,
+                max_per_trade_risk=self.config.max_per_trade_risk,
+                kelly_fraction=self.config.kelly_fraction
+            )
+            # Fit GARCH model on historical returns
+            returns = self.data['Close'].pct_change().dropna()
+            if len(returns) > 50:
+                self.position_sizer.fit_garch(returns)
+
     def _validate_data(self):
         """Validate required columns exist."""
         required = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -248,16 +272,70 @@ class BacktestEngine:
 
         return pd.Series(entries, index=self.data.index), pd.Series(exits, index=self.data.index)
 
-    def _get_position_sizes(self) -> pd.Series:
+    def _get_position_sizes(self, data: Optional[pd.DataFrame] = None) -> pd.Series:
         """
-        Calculate position sizes based on signal confidence.
+        Calculate position sizes using PositionSizer (Kelly, GARCH, vol targeting).
 
-        Strong signals get full position, regular signals get 70%.
+        If PositionSizer is enabled, uses:
+        - Kelly Criterion (Quarter-Kelly) for optimal sizing
+        - GARCH(1,1) volatility forecasting
+        - Volatility targeting (15% annualized)
+        - Risk budgeting (max portfolio heat, per-trade risk)
+        - Drawdown-based scaling
+
+        Falls back to simple confidence-based sizing if PositionSizer disabled.
         """
-        signals = self.data['Signal'].values
-        confidence = self.data.get('Signal_Confidence', pd.Series(np.ones(len(self.data)) * 0.5)).values
+        if data is None:
+            data = self.data
+        signals = data['Signal'].values
+        n = len(data)
 
-        sizes = np.ones(len(self.data)) * self.config.position_size_pct
+        if self.position_sizer is not None:
+            # Use PositionSizer for dynamic sizing
+            returns = data['Close'].pct_change().dropna()
+            sizes = np.zeros(n)
+
+            # Calculate equity curve and drawdown for position scaling
+            equity = (1 + returns).cumprod()
+            drawdown = (equity / equity.cummax() - 1).abs()
+
+            # Get trade history if available (for Kelly calculation)
+            trade_history = None
+            if self.portfolio is not None and hasattr(self.portfolio, 'trades'):
+                try:
+                    trades = self.portfolio.trades.records_readable
+                    if len(trades) >= 10:
+                        trade_history = pd.DataFrame({'return': trades['Return'].values})
+                except:
+                    pass
+
+            # Calculate position size for each bar
+            for i in range(len(returns), n):
+                hist_returns = returns.iloc[:i] if i > 0 else returns
+                if len(hist_returns) < 20:
+                    sizes[i] = self.config.position_size_pct
+                else:
+                    current_dd = drawdown.iloc[i-1] if i > 0 and i-1 < len(drawdown) else 0.0
+                    size_pct = self.position_sizer.get_position_size_pct(
+                        returns=hist_returns,
+                        current_drawdown=current_dd,
+                        trade_history=trade_history
+                    )
+                    sizes[i] = size_pct
+
+            # Fill initial period with base size
+            sizes[:len(returns)] = self.config.position_size_pct
+
+            # Apply signal strength adjustment
+            is_strong = (signals == 'STRONG_BUY') | (signals == 'STRONG_SELL')
+            is_regular = (signals == 'BUY') | (signals == 'SELL')
+            sizes[is_regular & ~is_strong] *= 0.7
+
+            return pd.Series(sizes, index=data.index)
+
+        # Fallback: Simple confidence-based sizing (original behavior)
+        confidence = data.get('Signal_Confidence', pd.Series(np.ones(n) * 0.5)).values
+        sizes = np.ones(n) * self.config.position_size_pct
 
         # Scale by confidence (0.5-1.0 range → 50%-100% of base size)
         confidence_scale = 0.5 + 0.5 * confidence
@@ -269,7 +347,7 @@ class BacktestEngine:
 
         sizes[is_regular & ~is_strong] *= 0.7
 
-        return pd.Series(sizes, index=self.data.index)
+        return pd.Series(sizes, index=data.index)
 
     def _calculate_slippage(self) -> pd.Series:
         """
@@ -343,11 +421,16 @@ class BacktestEngine:
             atr = data['ATR'].values
             tp_stop = self.config.take_profit_atr_mult * atr / close.values
 
+        # Calculate position sizes (uses PositionSizer if enabled)
+        position_sizes = self._get_position_sizes(data)
+
         # Run VectorBT portfolio simulation
         self.portfolio = vbt.Portfolio.from_signals(
             close=close,
             entries=entries,
             exits=exits,
+            size=position_sizes,  # Dynamic position sizing
+            size_type='percent',  # Size as percentage of equity
             init_cash=self.config.initial_capital,
             fees=self.config.commission_pct,
             slippage=self.config.slippage_pct,
@@ -733,7 +816,7 @@ if __name__ == "__main__":
     # Load and prepare data
     print("Loading data...")
     collector = DataCollector()
-    data = collector.load_data('AAPL')
+    data = collector.get_data('AAPL', years=10)
 
     print("Calculating indicators...")
     ti = TechnicalIndicators(data)

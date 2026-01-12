@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "ticker": "AAPL",
+  "years": 10,
+  "interval": "1d",
+  "download_date": "2026-01-11T23:59:08.705790",
+  "format": "parquet"
+}
