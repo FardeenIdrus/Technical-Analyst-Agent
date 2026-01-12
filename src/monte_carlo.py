@@ -122,13 +122,13 @@ class MonteCarloResult:
         }
 
     def get_summary(self) -> str:
-        """Generate human-readable summary."""
+        """Create readable summary."""
         significance = "YES - Strategy shows skill" if self.is_statistically_significant else "NO - Could be luck"
 
         return f"""
 ╔══════════════════════════════════════════════════════════════════╗
 ║                 MONTE CARLO SIMULATION RESULTS                   ║
-║                   {self.n_simulations:,} Simulations                          ║
+║                   {self.n_simulations:,} Simulations             ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  CONFIDENCE INTERVALS (95%)                                      ║
 ║  ─────────────────────────────────────────────────────────────── ║
@@ -138,18 +138,18 @@ class MonteCarloResult:
 ║                                                                  ║
 ║  RISK PROBABILITIES                                              ║
 ║  ─────────────────────────────────────────────────────────────── ║
-║  P(Loss > 10%):     {self.prob_loss_10pct:>7.1%}                               ║
-║  P(Loss > 20%):     {self.prob_loss_20pct:>7.1%}                               ║
-║  P(Negative CAGR):  {self.prob_negative_cagr:>7.1%}                               ║
-║  P(Sharpe < 0):     {self.prob_sharpe_below_zero:>7.1%}                               ║
-║  P(Sharpe < 1):     {self.prob_sharpe_below_one:>7.1%}                               ║
+║  P(Loss > 10%):     {self.prob_loss_10pct:>7.1%}                 ║
+║  P(Loss > 20%):     {self.prob_loss_20pct:>7.1%}                 ║
+║  P(Negative CAGR):  {self.prob_negative_cagr:>7.1%}              ║
+║  P(Sharpe < 0):     {self.prob_sharpe_below_zero:>7.1%}          ║
+║  P(Sharpe < 1):     {self.prob_sharpe_below_one:>7.1%}           ║
 ║                                                                  ║
 ║  PROBABILITY OF RUIN (Max DD exceeds threshold)                  ║
 ║  ─────────────────────────────────────────────────────────────── ║
-║  P(Max DD > 10%):   {self.prob_ruin_10pct:>7.1%}                               ║
-║  P(Max DD > 20%):   {self.prob_ruin_20pct:>7.1%}                               ║
-║  P(Max DD > 30%):   {self.prob_ruin_30pct:>7.1%}                               ║
-║  P(Max DD > 50%):   {self.prob_ruin_50pct:>7.1%}                               ║
+║  P(Max DD > 10%):   {self.prob_ruin_10pct:>7.1%}                 ║
+║  P(Max DD > 20%):   {self.prob_ruin_20pct:>7.1%}                 ║
+║  P(Max DD > 30%):   {self.prob_ruin_30pct:>7.1%}                 ║
+║  P(Max DD > 50%):   {self.prob_ruin_50pct:>7.1%}                 ║
 ║                                                                  ║
 ║  BEST/WORST CASE SCENARIOS (5th/95th percentile)                 ║
 ║  ─────────────────────────────────────────────────────────────── ║
@@ -189,7 +189,7 @@ class MonteCarloSimulator:
         risk_free_rate: float = 0.05
     ):
         """
-        Initialize Monte Carlo simulator.
+        Initialise Monte Carlo simulator.
 
         Args:
             returns: Daily returns series from strategy
@@ -230,10 +230,12 @@ class MonteCarloSimulator:
         if target_length is None:
             target_length = self.n_days
 
-        # Number of blocks needed
+        # # Calculate how many 20-day blocks needed to reach target length
+        #  2,520 days / 20 = 126 blocks
         n_blocks = int(np.ceil(target_length / self.block_size))
 
-        # Maximum starting index for a block
+        # Latest day where a full 20-day block can start
+        # Example: 2,520 total days - 20 block size = can start up to day 2,500
         max_start = self.n_days - self.block_size
 
         if max_start <= 0:
@@ -242,6 +244,7 @@ class MonteCarloSimulator:
             return self.returns[indices]
 
         # Randomly select block starting positions
+        # Key point: Blocks can overlap - Sample with replacement
         block_starts = np.random.randint(0, max_start + 1, size=n_blocks)
 
         # Build bootstrapped sample from blocks
@@ -266,50 +269,66 @@ class MonteCarloSimulator:
         n = len(returns)
         years = n / self.TRADING_DAYS_PER_YEAR
 
-        # Total return
+        # Total return: Compound all daily returns
         cumulative = np.cumprod(1 + returns)
         total_return = cumulative[-1] - 1 if len(cumulative) > 0 else 0
 
-        # CAGR
+        # CAGR: Annualised return rate
+        # CAGR = (Ending Value / Beginning Value)^(1/Years) - 1
+        
         if total_return > -1 and years > 0:
             cagr = (1 + total_return) ** (1 / years) - 1
         else:
-            cagr = -1.0  # Complete loss
-
+            cagr = -1.0  # Edge case: complete loss (portfolio went to zero)
+            
         # Volatility and Sharpe
         if len(returns) > 1:
+            # Volatility = annualised std dev of daily returns
+            # Daily volatility * sqrt(252) = annual volatility
             volatility = np.std(returns) * np.sqrt(self.TRADING_DAYS_PER_YEAR)
+            #Excess returns = strategy returns - risk-free rate
             excess_returns = returns - self.daily_rf
+            # Sharpe = (Mean Excess Return / Volatility) * sqrt(252)
+            # Measure risk-adjusted return
             if volatility > 0:
                 sharpe = (np.mean(excess_returns) / np.std(returns)) * np.sqrt(self.TRADING_DAYS_PER_YEAR)
             else:
-                sharpe = 0.0
+                sharpe = 0.0 #No volatility means no risk, Sharpe undefined
         else:
+            # Not enough data to calculate volatility/sharpe
             volatility = 0.0
             sharpe = 0.0
 
-        # Max Drawdown
+        # Max Drawdown: Worst peak-to-trough decline
         if len(cumulative) > 0:
+            
+            # Track highest point reached so far at each day
+            # E.g : [2, 1, 1, 2, 3] -> [2, 2, 2, 2, 3]
             running_max = np.maximum.accumulate(cumulative)
+            
+            # Calculate drawdonws at each point : (current - peak) / peak
             drawdowns = (cumulative - running_max) / running_max
             max_dd = np.min(drawdowns)  # Most negative value
         else:
             max_dd = 0.0
 
         return {
-            'total_return': total_return,
-            'cagr': cagr,
-            'sharpe': sharpe,
-            'volatility': volatility,
-            'max_dd': max_dd
+            'total_return': total_return,   # Total return over period
+            'cagr': cagr,                   # Compound Annual Growth Rate (annualised return)
+            'sharpe': sharpe,               # Sharpe Ratio (risk-adjusted return)
+            'volatility': volatility,       # Annualised volatility
+            'max_dd': max_dd                # Maximum Drawdown (worst peak-to-trough)
         }
 
     def _run_single_simulation(self, seed: Optional[int] = None) -> Dict[str, float]:
         """Run a single Monte Carlo simulation."""
+        # Set random seed for reproducibility (if provided)
         if seed is not None:
             np.random.seed(seed)
 
-        # Generate bootstrap sample
+        # Calls the block boostrap function
+        # Create one shuffled version of returns
+        # Result: Array of daily returns in new random order 
         bootstrap_returns = self._generate_block_bootstrap_sample()
 
         # Calculate metrics
@@ -323,7 +342,7 @@ class MonteCarloSimulator:
         self,
         n_simulations: int = 10000,
         confidence_level: float = 0.95,
-        parallel: bool = False,
+        parallel: bool = False, # Not used because often slower for this
         verbose: bool = True
     ) -> MonteCarloResult:
         """
@@ -344,18 +363,19 @@ class MonteCarloSimulator:
             print(f"  Block size: {self.block_size} days")
             print(f"  Original data: {self.n_days} days")
 
-        # Storage for results
-        cagrs = np.zeros(n_simulations)
-        sharpes = np.zeros(n_simulations)
-        max_dds = np.zeros(n_simulations)
-        total_returns = np.zeros(n_simulations)
-        volatilities = np.zeros(n_simulations)
+        # Pre-allocate arrays to store results from all simulations
+        cagrs = np.zeros(n_simulations) # Array to hold CAGR results
+        sharpes = np.zeros(n_simulations)  # Array to hold Sharpe results
+        max_dds = np.zeros(n_simulations)   # Array to hold Max Drawdown results
+        total_returns = np.zeros(n_simulations)     # Array to hold Total Return results
+        volatilities = np.zeros(n_simulations)      # Array to hold Volatility results
 
         # Run simulations
         for i in range(n_simulations):
             if verbose and (i + 1) % 2000 == 0:
                 print(f"  Progress: {i + 1:,}/{n_simulations:,} ({100 * (i + 1) / n_simulations:.0f}%)")
 
+             # Run one simulation: shuffle returns and calculate metrics
             result = self._run_single_simulation()
             cagrs[i] = result['cagr']
             sharpes[i] = result['sharpe']
@@ -366,46 +386,55 @@ class MonteCarloSimulator:
         # Calculate actual strategy metrics
         actual_metrics = self._calculate_metrics(self.returns)
 
-        # Calculate confidence intervals
-        alpha = 1 - confidence_level
-        lower_pct = alpha / 2 * 100
-        upper_pct = (1 - alpha / 2) * 100
+        # Calculate 95% confidence intervals
+        alpha = 1 - confidence_level    # 0.05 for 95% CI
+        lower_pct = alpha / 2 * 100     # 2.5th percentile
+        upper_pct = (1 - alpha / 2) * 100   # 97.5th percentile
 
+        # Calculate confidence intervals for each metric
         cagr_ci = (np.percentile(cagrs, lower_pct), np.percentile(cagrs, upper_pct))
         sharpe_ci = (np.percentile(sharpes, lower_pct), np.percentile(sharpes, upper_pct))
-        max_dd_ci = (np.percentile(max_dds, upper_pct), np.percentile(max_dds, lower_pct))  # Note: reversed for DD
+        # Note: Reversed for max drawdown (less negative = better)
+        max_dd_ci = (np.percentile(max_dds, upper_pct), np.percentile(max_dds, lower_pct))  
         total_return_ci = (np.percentile(total_returns, lower_pct), np.percentile(total_returns, upper_pct))
 
         # Calculate risk probabilities
-        prob_loss_10pct = np.mean(total_returns < -0.10)
-        prob_loss_20pct = np.mean(total_returns < -0.20)
-        prob_negative_cagr = np.mean(cagrs < 0)
-        prob_sharpe_below_zero = np.mean(sharpes < 0)
-        prob_sharpe_below_one = np.mean(sharpes < 1)
+        # Proportion of simulations where bad outcome occured
+        prob_loss_10pct = np.mean(total_returns < -0.10) # P(total return < -10%)
+        prob_loss_20pct = np.mean(total_returns < -0.20) # P(total return < -20%)
+        prob_negative_cagr = np.mean(cagrs < 0) # P(CAGR < 0%)
+        prob_sharpe_below_zero = np.mean(sharpes < 0)   # P(Sharpe < 0)
+        prob_sharpe_below_one = np.mean(sharpes < 1)  # P(Sharpe < 1)
 
         # Probability of ruin (max DD exceeds threshold)
-        prob_ruin_10pct = np.mean(max_dds < -0.10)
-        prob_ruin_20pct = np.mean(max_dds < -0.20)
-        prob_ruin_30pct = np.mean(max_dds < -0.30)
-        prob_ruin_50pct = np.mean(max_dds < -0.50)
+        prob_ruin_10pct = np.mean(max_dds < -0.10)  # P(Max DD > 10%)
+        prob_ruin_20pct = np.mean(max_dds < -0.20)  # P(Max DD > 20%)
+        prob_ruin_30pct = np.mean(max_dds < -0.30)  # P(Max DD > 30%)
+        prob_ruin_50pct = np.mean(max_dds < -0.50)  # P(Max DD > 50%)
 
-        # Best/worst case (5th and 95th percentile)
+          # 95th percentile = top 5% (optimistic outcome)
         best_case_cagr = np.percentile(cagrs, 95)
-        worst_case_cagr = np.percentile(cagrs, 5)
         best_case_sharpe = np.percentile(sharpes, 95)
+        best_case_max_dd = np.percentile(max_dds, 95)  # Least negative drawdown
+        
+        # 5th percentile = bottom 5% (pessimistic outcome)
+        worst_case_cagr = np.percentile(cagrs, 5)
         worst_case_sharpe = np.percentile(sharpes, 5)
-        best_case_max_dd = np.percentile(max_dds, 95)  # Least negative
-        worst_case_max_dd = np.percentile(max_dds, 5)  # Most negative
+        worst_case_max_dd = np.percentile(max_dds, 5)  # Most negative drawdown
 
-        # Statistical significance
+        # Statistical significance (skill vs luck)
+        
         cagr_percentile = stats.percentileofscore(cagrs, actual_metrics['cagr'])
         sharpe_percentile = stats.percentileofscore(sharpes, actual_metrics['sharpe'])
+        # Consider significant if actual in top 5% for either metric
         is_significant = cagr_percentile >= 95 or sharpe_percentile >= 95
 
         # Summary statistics
+        # Median = 50th percentile
         median_cagr = np.median(cagrs)
         median_sharpe = np.median(sharpes)
         median_max_dd = np.median(max_dds)
+        # Standard deviation = spread of results (uncertainty measure)
         std_cagr = np.std(cagrs)
         std_sharpe = np.std(sharpes)
 
@@ -415,40 +444,50 @@ class MonteCarloSimulator:
             print(f"  Median Sharpe: {median_sharpe:.2f}")
             print(f"  Actual CAGR percentile: {cagr_percentile:.1f}%")
 
+        # Package all results into MonteCarloResult dataclass
         return MonteCarloResult(
+            # Simulation parameters
             n_simulations=n_simulations,
             block_size=self.block_size,
             original_days=self.n_days,
+            # Full distributions (all 10,000 values for each metric)
             cagr_distribution=cagrs,
             sharpe_distribution=sharpes,
             max_dd_distribution=max_dds,
             total_return_distribution=total_returns,
             volatility_distribution=volatilities,
+            # 95% confidence intervals
             cagr_ci=cagr_ci,
             sharpe_ci=sharpe_ci,
             max_dd_ci=max_dd_ci,
             total_return_ci=total_return_ci,
+            # Risk probabilities
             prob_loss_10pct=prob_loss_10pct,
             prob_loss_20pct=prob_loss_20pct,
             prob_negative_cagr=prob_negative_cagr,
             prob_sharpe_below_zero=prob_sharpe_below_zero,
             prob_sharpe_below_one=prob_sharpe_below_one,
+            # Probability of ruin
             prob_ruin_10pct=prob_ruin_10pct,
             prob_ruin_20pct=prob_ruin_20pct,
             prob_ruin_30pct=prob_ruin_30pct,
             prob_ruin_50pct=prob_ruin_50pct,
+            # Best/worst case scenarios
             best_case_cagr=best_case_cagr,
             worst_case_cagr=worst_case_cagr,
             best_case_sharpe=best_case_sharpe,
             worst_case_sharpe=worst_case_sharpe,
             best_case_max_dd=best_case_max_dd,
             worst_case_max_dd=worst_case_max_dd,
+            # Actual backtest results
             actual_cagr=actual_metrics['cagr'],
             actual_sharpe=actual_metrics['sharpe'],
             actual_max_dd=actual_metrics['max_dd'],
+             # Statistical significance
             cagr_percentile=cagr_percentile,
             sharpe_percentile=sharpe_percentile,
             is_statistically_significant=is_significant,
+            # Summary statistics
             median_cagr=median_cagr,
             median_sharpe=median_sharpe,
             median_max_dd=median_max_dd,
