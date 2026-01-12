@@ -623,7 +623,7 @@ class MonteCarloSimulator:
     def run_stress_test(
         self,
         n_simulations: int = 1000,
-        stress_factor: float = 2.0,
+        stress_factor: float = 2.0, # Amplify negative returns by this factor
         verbose: bool = True
     ) -> Dict[str, Any]:
         """
@@ -643,26 +643,32 @@ class MonteCarloSimulator:
         if verbose:
             print(f"\n Running Stress Test (factor={stress_factor}x)...")
 
-        # Create stressed returns
+        
+        # STEP 1: Amplify negative returns to simulate harsher market
+       
         stressed_returns = self.returns.copy()
         stressed_returns[stressed_returns < 0] *= stress_factor
 
-        # Run simulations with stressed returns
+        # STEP 2: Pre-allocate array for stressed simulation results
         stressed_cagrs = np.zeros(n_simulations)
         stressed_max_dds = np.zeros(n_simulations)
 
+        # STEP 3: Run simulations on stressed returns
         for i in range(n_simulations):
             # Bootstrap from stressed returns
             n_blocks = int(np.ceil(self.n_days / self.block_size))
             max_start = len(stressed_returns) - self.block_size
-
+            # Block bootstrap: randomly sample blocks from stressed return
             if max_start > 0:
+                # Randomly select starting positions for blocks
                 block_starts = np.random.randint(0, max_start + 1, size=n_blocks)
                 bootstrap = []
+                 # Extract each block and build bootstrapped sequence
                 for start in block_starts:
                     bootstrap.extend(stressed_returns[start:start + self.block_size])
-                bootstrap = np.array(bootstrap[:self.n_days])
+                bootstrap = np.array(bootstrap[:self.n_days]) # Trim to exact length
             else:
+                 # Fallback: data too short, use simple random sampling
                 indices = np.random.randint(0, len(stressed_returns), size=self.n_days)
                 bootstrap = stressed_returns[indices]
 
@@ -671,16 +677,22 @@ class MonteCarloSimulator:
             stressed_cagrs[i] = metrics['cagr']
             stressed_max_dds[i] = metrics['max_dd']
 
+        # STEP 4: Analyse stressed simulation results
         results = {
+            # Input parameters
             'stress_factor': stress_factor,
             'n_simulations': n_simulations,
+            # Central tendencies
             'median_stressed_cagr': np.median(stressed_cagrs),
             'median_stressed_max_dd': np.median(stressed_max_dds),
+             # Probabilities of bad outcomes under stress
             'prob_loss_under_stress': np.mean(stressed_cagrs < 0),
             'prob_ruin_20pct_under_stress': np.mean(stressed_max_dds < -0.20),
             'prob_ruin_50pct_under_stress': np.mean(stressed_max_dds < -0.50),
+             # Worst-case scenarios (5th percentile - bottom 5%)
             'worst_case_cagr': np.percentile(stressed_cagrs, 5),
             'worst_case_max_dd': np.percentile(stressed_max_dds, 5),
+            # 95% confidence intervals under stress
             'stressed_cagr_ci': (np.percentile(stressed_cagrs, 2.5), np.percentile(stressed_cagrs, 97.5)),
             'stressed_max_dd_ci': (np.percentile(stressed_max_dds, 97.5), np.percentile(stressed_max_dds, 2.5))
         }
@@ -702,9 +714,9 @@ class MonteCarloSimulator:
         verbose: bool = True
     ) -> Dict[str, Any]:
         """
-        Analyze sequence of returns risk.
+        Analyse sequence of returns risk.
 
-        Same returns in different order can produce very different outcomes.
+        Same returns in different order can produce different outcomes.
         This shuffles the return sequence to understand path dependency.
 
         Args:
@@ -715,34 +727,44 @@ class MonteCarloSimulator:
             Dictionary with sequence risk analysis
         """
         if verbose:
-            print(f"\n Analyzing Sequence of Returns Risk...")
+            print(f"\n Analysing Sequence of Returns Risk...")
 
-        # Original metrics
+        # STEP 1: Calculate metrics using actual return sequence
         original_metrics = self._calculate_metrics(self.returns)
 
-        # Shuffle returns and recalculate
+        # STEP 2: Pre-allocate arrays for shuffled simulation results
         shuffled_cagrs = np.zeros(n_simulations)
         shuffled_max_dds = np.zeros(n_simulations)
 
+        # STEP 3: Shuffle returns and recalculate metrics
         for i in range(n_simulations):
             # Randomly permute returns (destroys autocorrelation)
             shuffled = np.random.permutation(self.returns)
+             # Calculate metrics on shuffled sequence
             metrics = self._calculate_metrics(shuffled)
             shuffled_cagrs[i] = metrics['cagr']
             shuffled_max_dds[i] = metrics['max_dd']
 
         # Note: CAGR should be identical (geometric mean is order-independent)
         # But max drawdown varies significantly with sequence
-
+        
+         # STEP 4: Analyse how much max drawdown varies with sequence
         results = {
+            # Number of shuffles performed
             'n_simulations': n_simulations,
+            # Original results (actual sequence)
             'original_max_dd': original_metrics['max_dd'],
+            # Central tendency of shuffled sequences
             'median_shuffled_max_dd': np.median(shuffled_max_dds),
+             # Range of possible max drawdowns (5th to 95th percentile)
             'max_dd_range': (np.percentile(shuffled_max_dds, 5), np.percentile(shuffled_max_dds, 95)),
             'max_dd_std': np.std(shuffled_max_dds),
+            # Sequence risk factor: How much does order matter?
+            # Higher value = order matters more (higher sequence risk)
             'sequence_risk_factor': np.std(shuffled_max_dds) / abs(original_metrics['max_dd']) if original_metrics['max_dd'] != 0 else 0,
             'worst_sequence_max_dd': np.min(shuffled_max_dds),
             'best_sequence_max_dd': np.max(shuffled_max_dds),
+            # Where does actual sequence rank? (percentile among all shuffles)
             'original_percentile': stats.percentileofscore(shuffled_max_dds, original_metrics['max_dd'])
         }
 
