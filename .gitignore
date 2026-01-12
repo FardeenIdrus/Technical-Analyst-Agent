@@ -29,3 +29,6 @@ outputs/*.png
 
 # OS
 .DS_Store
+
+chart/
+*.png
