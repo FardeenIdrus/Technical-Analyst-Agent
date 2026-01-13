@@ -13,15 +13,14 @@ __pycache__/
 .env
 
 # Data files (downloaded/cached data - regenerable)
-data/raw/
-data/processed/
+data/
+src/data/
 *.parquet
 *.csv
 
-# Outputs
-outputs/*.md
-outputs/*.json
-outputs/*.png
+# Outputs (generated analysis files)
+outputs/
+src/outputs/
 
 # IDE
 .vscode/
