@@ -660,11 +660,19 @@ class PerformanceAnalyser:
         winners = trades_pnl[trades_pnl > 0]
         losers = trades_pnl[trades_pnl < 0]
 
-        # Duration if available
+        # Duration - calculate from timestamps if available (VectorBT format)
+        avg_duration = 0.0
         if 'Duration' in self.trades.columns:
             avg_duration = self.trades['Duration'].mean()
-        else:
-            avg_duration = 0.0
+        elif 'Entry Timestamp' in self.trades.columns and 'Exit Timestamp' in self.trades.columns:
+            # VectorBT uses 'Entry Timestamp' and 'Exit Timestamp'
+            try:
+                entry_times = pd.to_datetime(self.trades['Entry Timestamp'])
+                exit_times = pd.to_datetime(self.trades['Exit Timestamp'])
+                durations = (exit_times - entry_times).dt.days
+                avg_duration = float(durations.mean()) if len(durations) > 0 else 0.0
+            except:
+                avg_duration = 0.0
 
         return {
             'total_trades': len(self.trades),

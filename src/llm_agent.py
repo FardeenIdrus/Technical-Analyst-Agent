@@ -209,7 +209,9 @@ class AnalysisContext:
     mc_max_dd_median: Optional[float] = None
 
     # === POSITION SIZING (from PositionSizer) ===
-    kelly_fraction: Optional[float] = None
+    full_kelly: Optional[float] = None  # Full Kelly fraction from trade stats
+    fractional_kelly: Optional[float] = None  # Kelly × fraction multiplier (e.g., quarter-Kelly)
+    kelly_multiplier: Optional[float] = None  # The fraction used (e.g., 0.25 for quarter-Kelly)
     garch_volatility: Optional[float] = None
     vol_adjusted_size: Optional[float] = None
 
@@ -1181,9 +1183,11 @@ Strengths:
             }
 
         # Add position sizing metrics if available
-        if context.kelly_fraction is not None or context.garch_volatility is not None:
+        if context.full_kelly is not None or context.garch_volatility is not None:
             output["position_sizing"] = {
-                "kelly_fraction": context.kelly_fraction,
+                "full_kelly": context.full_kelly,
+                "fractional_kelly": context.fractional_kelly,
+                "kelly_multiplier": context.kelly_multiplier,
                 "garch_volatility_forecast": context.garch_volatility,
                 "volatility_adjusted_size": context.vol_adjusted_size
             }
@@ -1657,7 +1661,8 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 ['Avg Win', f"{trades.get('avg_win', 0):.2%}" if trades.get('avg_win') else 'N/A'],
                 ['Avg Loss', f"{trades.get('avg_loss', 0):.2%}" if trades.get('avg_loss') else 'N/A'],
                 ['Best Trade', f"{trades.get('best_trade', 0):.2%}" if trades.get('best_trade') else 'N/A'],
-                ['Worst Trade', f"{trades.get('worst_trade', 0):.2%}" if trades.get('worst_trade') else 'N/A']
+                ['Worst Trade', f"{trades.get('worst_trade', 0):.2%}" if trades.get('worst_trade') else 'N/A'],
+                ['Avg Trade Duration', f"{trades.get('avg_trade_duration', 0):.1f} days" if trades.get('avg_trade_duration') is not None else 'N/A']
             ]
             trades_table = Table(trades_data, colWidths=[2.5*inch, 2.5*inch])
             trades_table.setStyle(TableStyle([
@@ -1676,14 +1681,19 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             content.append(Paragraph("STATISTICAL SIGNIFICANCE", section_style))
             stats = bt.get('statistical_tests', {})
             prob = bt.get('probabilistic_metrics', {})
+            sharpe_ci = prob.get('sharpe_confidence_interval', {})
             stats_data = [
                 ['Test', 'Value', 'Interpretation'],
+                ['CAGR t-stat', f"{stats.get('cagr_tstat', 0):.2f}" if stats.get('cagr_tstat') else 'N/A',
+                 'Significant' if abs(stats.get('cagr_tstat', 0)) > 1.96 else 'Not significant'],
                 ['CAGR p-value', f"{stats.get('cagr_pvalue', 0):.4f}" if stats.get('cagr_pvalue') else 'N/A',
                  'Significant' if stats.get('cagr_pvalue', 1) < 0.05 else 'Not significant'],
                 ['Prob. Sharpe', f"{prob.get('probabilistic_sharpe', 0):.1%}" if prob.get('probabilistic_sharpe') else 'N/A',
                  'P(true Sharpe > 0)'],
                 ['Deflated Sharpe', f"{prob.get('deflated_sharpe', 0):.2f}" if prob.get('deflated_sharpe') else 'N/A',
                  'Adjusted for trials'],
+                ['Sharpe 95% CI', f"[{sharpe_ci.get('lower', 0):.2f}, {sharpe_ci.get('upper', 0):.2f}]" if sharpe_ci.get('lower') else 'N/A',
+                 'Confidence interval'],
                 ['Skewness', f"{stats.get('returns_skewness', 0):.2f}" if stats.get('returns_skewness') else 'N/A',
                  'Normal=0'],
                 ['Kurtosis', f"{stats.get('returns_kurtosis', 0):.2f}" if stats.get('returns_kurtosis') else 'N/A',
@@ -1703,6 +1713,30 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
             ]))
             content.append(stats_table)
+
+            # Time Period Section
+            time_period = bt.get('time_period', {})
+            if time_period.get('start_date'):
+                content.append(Paragraph("BACKTEST PERIOD", section_style))
+                period_data = [
+                    ['Period', 'Value'],
+                    ['Start Date', time_period.get('start_date', 'N/A')],
+                    ['End Date', time_period.get('end_date', 'N/A')],
+                    ['Trading Days', str(time_period.get('trading_days', 0))],
+                    ['Years', f"{time_period.get('years', 0):.1f}"]
+                ]
+                period_table = Table(period_data, colWidths=[2.5*inch, 2.5*inch])
+                period_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4a5568')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('ALIGN', (1, 0), (1, -1), 'CENTER'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                    ('TOPPADDING', (0, 0), (-1, -1), 5),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ]))
+                content.append(period_table)
 
         # Comprehensive Monte Carlo Section (if available)
         if 'monte_carlo' in json_data:
@@ -1760,15 +1794,39 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 ]))
                 content.append(dist_table)
 
+            # Other Monte Carlo Metrics
+            if other.get('sharpe_median') is not None or other.get('max_drawdown_median') is not None:
+                content.append(Spacer(1, 15))
+                content.append(Paragraph("<b>Additional Monte Carlo Metrics</b>", body_style))
+                other_data = [
+                    ['Metric', 'Value', 'Description'],
+                    ['Sharpe Median', f"{other.get('sharpe_median', 0):.2f}" if other.get('sharpe_median') is not None else 'N/A',
+                     'Median Sharpe from simulations'],
+                    ['Max DD Median', f"{other.get('max_drawdown_median', 0):.1%}" if other.get('max_drawdown_median') is not None else 'N/A',
+                     'Median max drawdown']
+                ]
+                other_table = Table(other_data, colWidths=[1.5*inch, 1.5*inch, 2*inch])
+                other_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4a5568')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                    ('TOPPADDING', (0, 0), (-1, -1), 5),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ]))
+                content.append(other_table)
+
         # Position Sizing Section (if available)
         if 'position_sizing' in json_data:
             content.append(Paragraph("POSITION SIZING ANALYSIS", section_style))
             ps = json_data['position_sizing']
             ps_data = [
                 ['Metric', 'Value'],
-                ['Kelly Fraction', f"{ps.get('kelly_fraction', 0):.1%}" if ps.get('kelly_fraction') else 'N/A'],
-                ['GARCH Vol Forecast', f"{ps.get('garch_volatility_forecast', 0):.1%}" if ps.get('garch_volatility_forecast') else 'N/A'],
-                ['Vol-Adjusted Size', f"{ps.get('volatility_adjusted_size', 0):.1%}" if ps.get('volatility_adjusted_size') else 'N/A']
+                ['Full Kelly', f"{ps.get('full_kelly', 0):.1%}" if ps.get('full_kelly') is not None else 'N/A'],
+                ['Fractional Kelly', f"{ps.get('fractional_kelly', 0):.1%}" if ps.get('fractional_kelly') is not None else 'N/A'],
+                ['GARCH Vol Forecast', f"{ps.get('garch_volatility_forecast', 0):.1%}" if ps.get('garch_volatility_forecast') else 'N/A']
             ]
             ps_table = Table(ps_data, colWidths=[2.5*inch, 2.5*inch])
             ps_table.setStyle(TableStyle([
@@ -1837,7 +1895,8 @@ def create_context_from_data(
     data: pd.DataFrame,
     ticker: str = "UNKNOWN",
     performance_report: Optional[Any] = None,
-    mc_result: Optional[Any] = None
+    mc_result: Optional[Any] = None,
+    position_sizer: Optional[Any] = None
 ) -> AnalysisContext:
     """
     Create AnalysisContext from DataFrame.
@@ -1847,6 +1906,7 @@ def create_context_from_data(
         ticker: Stock ticker symbol
         performance_report: Optional PerformanceReport
         mc_result: Optional MonteCarloResult
+        position_sizer: Optional PositionSizer for Kelly/GARCH metrics
 
     Returns:
         AnalysisContext object
@@ -1956,14 +2016,45 @@ def create_context_from_data(
             import numpy as np
             context.mc_sharpe_median = float(np.median(sharpe_dist))
 
-        max_dd_dist = getattr(mc_result, 'max_drawdown_distribution', None)
+        # Note: MonteCarloResult uses 'max_dd_distribution' not 'max_drawdown_distribution'
+        max_dd_dist = getattr(mc_result, 'max_dd_distribution', None)
         if max_dd_dist is not None and hasattr(max_dd_dist, '__len__') and len(max_dd_dist) > 0:
             import numpy as np
             context.mc_max_dd_median = float(np.median(max_dd_dist))
 
     # Add position sizing metrics if position_sizer provided
-    if hasattr(mc_result, 'kelly_fraction') if mc_result else False:
-        context.kelly_fraction = getattr(mc_result, 'kelly_fraction', None)
+    if position_sizer is not None:
+        # Get Kelly multiplier from the position sizer config (e.g., 0.25 for quarter-Kelly)
+        context.kelly_multiplier = getattr(position_sizer, 'kelly_fraction', None)
+
+        # Calculate actual Kelly fraction from trade stats if available
+        if context.win_rate is not None and context.avg_win is not None and context.avg_loss is not None:
+            try:
+                # Kelly formula: f* = (p * b - q) / b
+                # where p = win_rate, q = 1-p, b = payoff_ratio (avg_win / abs(avg_loss))
+                p = context.win_rate
+                q = 1 - p
+                avg_loss_abs = abs(context.avg_loss) if context.avg_loss else 0.01
+                b = context.avg_win / avg_loss_abs if avg_loss_abs > 0 else 1.0
+
+                full_kelly = (p * b - q) / b if b > 0 else 0.0
+                context.full_kelly = max(0.0, full_kelly)  # Kelly can't be negative (means no edge)
+
+                # Fractional Kelly = full_kelly × multiplier
+                if context.kelly_multiplier:
+                    context.fractional_kelly = context.full_kelly * context.kelly_multiplier
+            except:
+                pass
+
+        # Get GARCH volatility forecast if model is fitted (PositionSizer uses garch_omega to indicate fitted)
+        if hasattr(position_sizer, 'garch_omega') and position_sizer.garch_omega is not None:
+            try:
+                returns = data['Close'].pct_change().dropna()
+                garch_vol = position_sizer.forecast_volatility(returns)
+                context.garch_volatility = garch_vol.get('annualized_volatility', None)
+                context.vol_adjusted_size = position_sizer.target_volatility / garch_vol.get('annualized_volatility', 1.0) if garch_vol.get('annualized_volatility') else None
+            except:
+                pass
 
     return context
 
@@ -2026,13 +2117,14 @@ if __name__ == "__main__":
     simulator = MonteCarloSimulator(returns)
     mc_result = simulator.run_simulation(n_simulations=500, verbose=False)
 
-    # Create context
+    # Create context (pass position_sizer for Kelly/GARCH metrics)
     print("\nCreating analysis context...")
     context = create_context_from_data(
         data,
         ticker='AAPL',
         performance_report=report,
-        mc_result=mc_result
+        mc_result=mc_result,
+        position_sizer=engine.position_sizer
     )
 
     print(f"\nContext created:")
