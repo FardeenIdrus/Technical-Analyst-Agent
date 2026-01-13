@@ -1991,7 +1991,7 @@ if __name__ == "__main__":
     # Load and process data
     print("\nLoading data...")
     collector = DataCollector()
-    data = collector.get_data('AAPL', years=5)
+    data = collector.get_data('AAPL', years=10)
 
     print("Processing indicators...")
     ti = TechnicalIndicators(data)
@@ -2007,7 +2007,7 @@ if __name__ == "__main__":
 
     # Run backtest
     print("Running backtest...")
-    config = BacktestConfig(use_position_sizer=False)
+    config = BacktestConfig()  # Uses PositionSizer by default
     engine = BacktestEngine(data, config)
     results = engine.run_backtest()
 
