@@ -28,6 +28,7 @@ import vectorbt as vbt
 
 # Import PositionSizer for advanced position sizing
 from position_sizer import PositionSizer
+from performance_metrics import PerformanceAnalyser
 
 # Suppress VectorBT warnings for cleaner output
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -455,9 +456,15 @@ class BacktestEngine:
         annual_return = float(returns.mean() * 252) if len(returns) > 0 else 0
         volatility = float(returns.std() * np.sqrt(252)) if len(returns) > 0 else 0
 
-        # Risk-adjusted returns
-        sharpe = float(pf.sharpe_ratio()) if not np.isnan(pf.sharpe_ratio()) else 0
-        sortino = float(pf.sortino_ratio()) if not np.isnan(pf.sortino_ratio()) else 0
+        # Risk-adjusted returns using PerformanceAnalyser for consistency with llm_agent.py
+        # Both files now use the same calculation methodology (5% annual risk-free rate)
+        try:
+            trades_df = pf.trades.records_readable if hasattr(pf.trades, 'records_readable') else None
+        except:
+            trades_df = None
+        analyser = PerformanceAnalyser(returns, trades_df)
+        sharpe = analyser.calculate_sharpe_ratio()
+        sortino = analyser.calculate_sortino_ratio()
 
         # Drawdown
         max_dd = float(pf.max_drawdown())
@@ -677,7 +684,9 @@ class BacktestEngine:
             # Buy & hold: Buy on day 1, sell on last day (baseline for single-stock strategy)
             bh_return = (data['Close'].iloc[-1] / data['Close'].iloc[0]) - 1
             bh_returns = data['Close'].pct_change().dropna()
-            bh_sharpe = (bh_returns.mean() * 252) / (bh_returns.std() * np.sqrt(252))
+            # Use 5% risk-free rate to match PerformanceAnalyser
+            daily_rf = (1 + 0.05) ** (1/252) - 1
+            bh_sharpe = ((bh_returns.mean() - daily_rf) * 252) / (bh_returns.std() * np.sqrt(252))
             bh_max_dd = (data['Close'] / data['Close'].cummax() - 1).min()
 
             benchmark_metrics = {
@@ -705,7 +714,9 @@ class BacktestEngine:
             # Calculate SPY metrics (same formulas as buy_hold)
             spy_return = (spy_aligned['Close'].iloc[-1] / spy_aligned['Close'].iloc[0]) - 1
             spy_returns = spy_aligned['Close'].pct_change().dropna()
-            spy_sharpe = (spy_returns.mean() * 252) / (spy_returns.std() * np.sqrt(252))
+            # Use 5% risk-free rate to match PerformanceAnalyser
+            daily_rf = (1 + 0.05) ** (1/252) - 1
+            spy_sharpe = ((spy_returns.mean() - daily_rf) * 252) / (spy_returns.std() * np.sqrt(252))
             spy_max_dd = (spy_aligned['Close'] / spy_aligned['Close'].cummax() - 1).min()
 
             benchmark_metrics = {
