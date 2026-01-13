@@ -1719,7 +1719,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 ['Statistical Significance', 'Value'],
                 ['CAGR Percentile', f"{sig.get('cagr_percentile', 0):.0f}th" if sig.get('cagr_percentile') else 'N/A'],
                 ['Statistically Significant', 'Yes' if sig.get('is_statistically_significant') else 'No'],
-                ['Probability of 10%+ Loss', f"{sig.get('probability_of_loss', 0):.1%}" if sig.get('probability_of_loss') else 'N/A']
+                ['Probability of 10%+ Loss', f"{sig.get('probability_of_loss', 0):.1%}" if sig.get('probability_of_loss') is not None else 'N/A']
             ]
             sig_table = Table(sig_data, colWidths=[2.5*inch, 2.5*inch])
             sig_table.setStyle(TableStyle([
