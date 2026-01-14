@@ -320,43 +320,50 @@ class LLMAgent:
 
     # System prompts for different analysis types
     TRADE_ANALYSIS_PROMPT = """You are a senior quantitative analyst at a hedge fund.
-Your task is to analyse technical indicators and market regime data to generate
-actionable trading recommendations.
+
+CRITICAL CONSTRAINT:
+The quantitative signal system has already generated a recommendation: {signal}
+with confluence score: {confluence:.2f} and confidence: {confidence:.0%}.
+You MUST use this signal as your final recommendation. Do NOT override it.
+Your role is to EXPLAIN and VALIDATE this decision, not to change it.
 
 ANALYSIS FRAMEWORK:
 1. Technical Indicator Analysis
    - Evaluate momentum (RSI, MACD)
    - Assess trend (SMA crossovers, ADX)
    - Check volatility (ATR, Bollinger Bands)
+   - Explain how these indicators led to the {signal} signal
 
 2. Regime Context
    - Consider market regime (bull/bear/sideways)
    - Account for volatility regime
    - Factor in trend persistence (Hurst exponent)
+   - Explain why the current regime supports {signal}
 
 3. Risk Assessment
-   - Identify key risks
-   - Set appropriate stop loss
-   - Calculate risk/reward ratio
+   - Identify key risks and conflicting indicators
+   - If any indicators disagree with the signal, note them as warnings
+   - Set appropriate stop loss and take profit levels
 
-4. Recommendation Synthesis
-   - Combine all factors
-   - Assign confidence level
-   - Specify entry, stop, target
+4. Trade Specification (only if signal is BUY or SELL)
+   - Entry price, stop loss, take profit
+   - Position size recommendation
+   - Risk/reward ratio
 
 CHAIN OF THOUGHT:
-Always explain your reasoning step by step:
-- "RSI at X indicates..."
+Explain the signal system's reasoning step by step:
+- "The signal system generated {signal} because..."
+- "RSI at X supports/conflicts with this because..."
 - "Combined with MACD showing..."
-- "Given the STRONG_BULL regime..."
-- "Therefore, my recommendation is..."
+- "Given the current regime..."
+- "Key risks to this recommendation are..."
 
 OUTPUT FORMAT:
 Provide your analysis in this exact JSON structure:
-{
-    "recommendation": "STRONG_BUY|BUY|HOLD|SELL|STRONG_SELL",
-    "confidence": 0.0-1.0,
-    "rationale": "detailed explanation",
+{{
+    "recommendation": "{signal}",
+    "confidence": {confidence},
+    "rationale": "detailed explanation of WHY the signal system generated this recommendation",
     "entry_price": float,
     "stop_loss": float,
     "take_profit": float,
@@ -365,8 +372,8 @@ Provide your analysis in this exact JSON structure:
     "risks": ["risk1", "risk2"],
     "catalysts": ["catalyst1", "catalyst2"],
     "time_horizon": "intraday|swing|position",
-    "reasoning_chain": ["step1", "step2", "step3"]
-}"""
+    "conflicting_indicators": ["any indicators that disagree with the signal"]
+}}"""
 
     PERFORMANCE_ANALYSIS_PROMPT = """You are a senior portfolio manager reviewing strategy performance.
 Analyse the backtest results and provide institutional-quality assessment.
@@ -700,8 +707,15 @@ SIGNAL SYSTEM:
 Provide your analysis following the chain-of-thought framework and output in JSON format.
 """
 
+        # Format the prompt with signal system data
+        formatted_prompt = self.TRADE_ANALYSIS_PROMPT.format(
+            signal=context.signal,
+            confluence=context.confluence_score,
+            confidence=context.signal_confidence
+        )
+
         response = self._call_claude(
-            self.TRADE_ANALYSIS_PROMPT,
+            formatted_prompt,
             user_message,
             use_tools=use_tools
         )
@@ -734,15 +748,23 @@ Provide your analysis following the chain-of-thought framework and output in JSO
                 'STRONG_SELL': Recommendation.STRONG_SELL
             }
 
+            # Handle None values from LLM (e.g., when signal is HOLD, it may not provide trade specs)
+            entry_price = data.get('entry_price') or context.current_price
+            stop_loss = data.get('stop_loss') or context.current_price * 0.95
+            take_profit = data.get('take_profit') or context.current_price * 1.10
+            position_size = data.get('position_size_pct') or 0.1
+            risk_reward = data.get('risk_reward_ratio') or 2.0
+            confidence = data.get('confidence') or 0.5
+
             return TradeRecommendation(
                 recommendation=rec_map.get(data.get('recommendation', 'HOLD'), Recommendation.HOLD),
-                confidence=float(data.get('confidence', 0.5)),
+                confidence=float(confidence),
                 rationale=data.get('rationale', ''),
-                entry_price=float(data.get('entry_price', context.current_price)),
-                stop_loss=float(data.get('stop_loss', context.current_price * 0.95)),
-                take_profit=float(data.get('take_profit', context.current_price * 1.10)),
-                position_size_pct=float(data.get('position_size_pct', 0.1)),
-                risk_reward_ratio=float(data.get('risk_reward_ratio', 2.0)),
+                entry_price=float(entry_price),
+                stop_loss=float(stop_loss),
+                take_profit=float(take_profit),
+                position_size_pct=float(position_size),
+                risk_reward_ratio=float(risk_reward),
                 risks=data.get('risks', []),
                 catalysts=data.get('catalysts', []),
                 time_horizon=data.get('time_horizon', 'swing')
