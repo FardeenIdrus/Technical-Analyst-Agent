@@ -1221,7 +1221,7 @@ Strengths:
     def save_all_outputs(
         self,
         context: AnalysisContext,
-        output_dir: str = "outputs",
+        output_dir: str = None,
         analyst_name: str = "Fardeen Idrus",
         agent_name: str = "Technical Analyst Agent",
         include_performance: bool = True
@@ -1231,7 +1231,7 @@ Strengths:
 
         Args:
             context: AnalysisContext with all data
-            output_dir: Directory to save outputs (default: "outputs")
+            output_dir: Directory to save outputs (defaults to project_root/outputs)
             analyst_name: Name of the analyst for PDF header
             agent_name: Name of the agent for PDF header
             include_performance: Whether to include performance analysis
@@ -1239,6 +1239,11 @@ Strengths:
         Returns:
             Dictionary with paths to saved files
         """
+        # Default to project_root/outputs (one level up from src/)
+        if output_dir is None:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            output_dir = os.path.join(project_root, "outputs")
+
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
 
@@ -2212,7 +2217,6 @@ if __name__ == "__main__":
 
         output_paths = agent.save_all_outputs(
             context,
-            output_dir="outputs",
             analyst_name="Fardeen Idrus",
             agent_name="Technical Analyst Agent"
         )

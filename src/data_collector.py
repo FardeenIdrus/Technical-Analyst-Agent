@@ -26,14 +26,19 @@ class DataCollector:
 
     VERSION = "2.0"  # Data format version for cache invalidation
 
-    def __init__(self, data_dir="data/raw", use_parquet=True):
+    def __init__(self, data_dir=None, use_parquet=True):
         """
         Initialize data collector.
 
         Args:
-            data_dir: Directory to save downloaded data
+            data_dir: Directory to save downloaded data (defaults to project_root/data/raw)
             use_parquet: Use Parquet format (faster, smaller) vs CSV (default: True)
         """
+        # Default to project_root/data/raw (one level up from src/)
+        if data_dir is None:
+            project_root = Path(__file__).parent.parent
+            data_dir = project_root / "data" / "raw"
+
         # Create Path object for the data directory
         self.data_dir = Path(data_dir)
         # Create directory if it doesn't exist (parents=True creates parent dirs too)

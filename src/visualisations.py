@@ -1153,7 +1153,7 @@ def create_full_report(
     trades: Optional[pd.DataFrame] = None,
     benchmark_returns: Optional[pd.Series] = None,
     mc_result: Optional[Any] = None,
-    output_dir: str = 'charts',
+    output_dir: str = None,
     prefix: str = 'strategy'
 ) -> Dict[str, plt.Figure]:
     """
@@ -1165,13 +1165,19 @@ def create_full_report(
         trades: Trade records DataFrame
         benchmark_returns: Benchmark returns for comparison
         mc_result: Monte Carlo simulation results
-        output_dir: Directory to save charts
+        output_dir: Directory to save charts (defaults to project_root/charts)
         prefix: Filename prefix
 
     Returns:
         Dictionary of {chart_name: figure}
     """
     import os
+
+    # Default to project_root/charts (one level up from src/)
+    if output_dir is None:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        output_dir = os.path.join(project_root, "charts")
+
     os.makedirs(output_dir, exist_ok=True)
 
     figures = {}
