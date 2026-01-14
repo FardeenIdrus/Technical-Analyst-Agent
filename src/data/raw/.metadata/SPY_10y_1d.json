@@ -1,8 +1,0 @@
-{
-  "version": "2.0",
-  "ticker": "SPY",
-  "years": 10,
-  "interval": "1d",
-  "download_date": "2026-01-11T23:59:12.227394",
-  "format": "parquet"
-}
