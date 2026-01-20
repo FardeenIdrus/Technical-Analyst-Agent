@@ -1062,6 +1062,8 @@ if __name__ == "__main__":
     print(f"\n" + "=" * 70)
     print("BENCHMARK COMPARISON")
     print("=" * 70)
+    
+    
 
     # Get buy & hold returns
     bh_returns = data['Close'].pct_change().dropna()

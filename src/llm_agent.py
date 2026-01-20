@@ -319,60 +319,83 @@ class LLMAgent:
     """
 
     # System prompts for different analysis types
-    TRADE_ANALYSIS_PROMPT = """You are a senior quantitative analyst at a hedge fund.
+    TRADE_ANALYSIS_PROMPT = """You are a senior quantitative analyst at a hedge fund writing an investment memo.
 
 CRITICAL CONSTRAINT:
 The quantitative signal system has already generated a recommendation: {signal}
 with confluence score: {confluence:.2f} and confidence: {confidence:.0%}.
 You MUST use this signal as your final recommendation. Do NOT override it.
-Your role is to EXPLAIN and VALIDATE this decision, not to change it.
+Your role is to EXPLAIN and VALIDATE this decision with institutional-quality analysis.
 
 ANALYSIS FRAMEWORK:
+
 1. Technical Indicator Analysis
-   - Evaluate momentum (RSI, MACD)
-   - Assess trend (SMA crossovers, ADX)
-   - Check volatility (ATR, Bollinger Bands)
-   - Explain how these indicators led to the {signal} signal
+   - RSI: Is it overbought (>70), oversold (<30), or neutral? How does this support the {signal}?
+   - MACD: Is the histogram positive/negative? Is there a crossover? Any divergence with price?
+   - Moving Averages: Is price above/below SMA 50 and SMA 200? Golden/Death cross forming?
+   - ADX: Is the trend strong (>25) or weak (<20)? What does this mean for the signal?
+   - Bollinger Bands: Is price near upper/lower band? Is a squeeze forming?
+   - Volume: Is volume confirming the price action or showing divergence?
 
 2. Regime Context
-   - Consider market regime (bull/bear/sideways)
-   - Account for volatility regime
-   - Factor in trend persistence (Hurst exponent)
-   - Explain why the current regime supports {signal}
+   - Market Regime: How does the current regime (bull/bear/sideways) affect the signal?
+   - Volatility Regime: Is volatility high or low? How should this impact position sizing?
+   - Trend Persistence (Hurst): Is the market trending (H>0.5) or mean-reverting (H<0.5)?
+   - Explain specifically why the {signal} signal is appropriate for this regime
 
-3. Risk Assessment
-   - Identify key risks and conflicting indicators
-   - If any indicators disagree with the signal, note them as warnings
-   - Set appropriate stop loss and take profit levels
+3. Confluence Analysis
+   - List which indicators are currently bullish vs bearish
+   - Explain how the confluence score of {confluence:.2f} was derived
+   - Identify any conflicting signals and explain why they were outweighed
 
-4. Trade Specification (only if signal is BUY or SELL)
-   - Entry price, stop loss, take profit
-   - Position size recommendation
-   - Risk/reward ratio
+4. Risk Assessment
+   - Identify 3-5 specific risks that could invalidate this signal
+   - Key support/resistance levels to watch
+   - What price action would cause an early exit?
+   - Maximum acceptable drawdown for this trade
+
+5. Trade Specification (required for BUY/SELL, optional for HOLD)
+   - Entry price with reasoning (current price, limit order level, etc.)
+   - Stop loss level based on ATR or key technical support
+   - Take profit target based on ATR or key resistance
+   - Position size recommendation based on current volatility regime
+   - Risk/reward ratio and whether it meets minimum threshold (>2:1 preferred)
+
+6. Scenario Analysis
+   - Bull case: What needs to happen for maximum profit? Target price?
+   - Base case: Most likely outcome given current conditions
+   - Bear case: What could go wrong? Where is the invalidation point?
 
 CHAIN OF THOUGHT:
-Explain the signal system's reasoning step by step:
-- "The signal system generated {signal} because..."
-- "RSI at X supports/conflicts with this because..."
-- "Combined with MACD showing..."
-- "Given the current regime..."
-- "Key risks to this recommendation are..."
+Provide detailed reasoning in your rationale, not just conclusions:
+- "The signal system generated {signal} because the confluence score of {confluence:.2f} indicates..."
+- "RSI at [value] is [overbought/oversold/neutral], which in a [regime] regime suggests..."
+- "MACD histogram is [positive/negative] with [crossover status], which [supports/conflicts] because..."
+- "Despite [any conflicts], the signal remains {signal} because [key reasons]..."
+- "The primary risks to this trade are [specific risks] which would be triggered if [conditions]..."
 
 OUTPUT FORMAT:
 Provide your analysis in this exact JSON structure:
 {{
     "recommendation": "{signal}",
     "confidence": {confidence},
-    "rationale": "detailed explanation of WHY the signal system generated this recommendation",
+    "rationale": "Comprehensive 4-6 sentence explanation covering: (1) why the signal was generated, (2) key supporting indicators, (3) regime context, (4) any conflicts and why they were outweighed",
     "entry_price": float,
     "stop_loss": float,
     "take_profit": float,
     "position_size_pct": 0.0-1.0,
     "risk_reward_ratio": float,
-    "risks": ["risk1", "risk2"],
-    "catalysts": ["catalyst1", "catalyst2"],
+    "risks": ["Specific risk 1 with trigger condition", "Specific risk 2 with trigger condition", "Specific risk 3 with trigger condition"],
+    "catalysts": ["Potential bullish catalyst", "Potential bearish catalyst"],
     "time_horizon": "intraday|swing|position",
-    "conflicting_indicators": ["any indicators that disagree with the signal"]
+    "conflicting_indicators": ["Indicator 1: reason it conflicts", "Indicator 2: reason it conflicts"],
+    "support_levels": [nearest_support_price, secondary_support_price],
+    "resistance_levels": [nearest_resistance_price, secondary_resistance_price],
+    "scenarios": {{
+        "bull_case": "Description and target price",
+        "base_case": "Most likely outcome",
+        "bear_case": "What could go wrong and invalidation level"
+    }}
 }}"""
 
     PERFORMANCE_ANALYSIS_PROMPT = """You are a senior portfolio manager reviewing strategy performance.
@@ -430,6 +453,7 @@ OUTPUT FORMAT:
             max_tokens: Maximum response tokens
             temperature: Sampling temperature (lower = more deterministic)
         """
+        
         self.data = data
         self.model = model
         self.fallback_model = fallback_model
