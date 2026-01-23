@@ -359,18 +359,35 @@ class SignalGenerator:
         trend_mask = strategy == Strategy.TREND_FOLLOWING.value
 
         # Strong signals require high confluence
+        # Old threshold values:
+        '''
         signal[(trend_mask) & (confluence >= 0.5)] = Signal.STRONG_BUY.value
         signal[(trend_mask) & (confluence >= 0.25) & (confluence < 0.5)] = Signal.BUY.value
         signal[(trend_mask) & (confluence <= -0.5)] = Signal.STRONG_SELL.value
         signal[(trend_mask) & (confluence <= -0.25) & (confluence > -0.5)] = Signal.SELL.value
+        '''
+        
+    
+        signal[(trend_mask) & (confluence >= 0.35)] = Signal.STRONG_BUY.value
+        signal[(trend_mask) & (confluence >= 0.15) & (confluence < 0.35)] = Signal.BUY.value
+        signal[(trend_mask) & (confluence <= -0.35)] = Signal.STRONG_SELL.value
+        signal[(trend_mask) & (confluence <= -0.15) & (confluence > -0.35)] = Signal.SELL.value
 
         # Mean-reversion strategy: fade the extremes (buy oversold, sell overbought)
         mr_mask = strategy == Strategy.MEAN_REVERSION.value
-
+        
+        # Old values
+        '''
         signal[(mr_mask) & (confluence >= 0.5)] = Signal.STRONG_SELL.value   # Too bullish, fade it
         signal[(mr_mask) & (confluence >= 0.25) & (confluence < 0.5)] = Signal.SELL.value
         signal[(mr_mask) & (confluence <= -0.5)] = Signal.STRONG_BUY.value   # Too bearish, buy the dip
         signal[(mr_mask) & (confluence <= -0.25) & (confluence > -0.5)] = Signal.BUY.value
+        '''
+
+        signal[(mr_mask) & (confluence >= 0.5)] = Signal.STRONG_SELL.value   # Too bullish, fade it
+        signal[(mr_mask) & (confluence >= 0.25) & (confluence < 0.5)] = Signal.SELL.value
+        signal[(mr_mask) & (confluence <= -0.35)] = Signal.STRONG_BUY.value   # Too bearish, buy the dip
+        signal[(mr_mask) & (confluence <= -0.15) & (confluence > -0.5)] = Signal.BUY.value
 
         # Defensive strategy - conservative but not paralyzed
         # Threshold lowered from 0.67 to 0.5 (was unreachable since max confluence is 0.667)
@@ -379,25 +396,62 @@ class SignalGenerator:
         signal[(def_mask) & (confluence >= 0.5)] = Signal.BUY.value   # Strong bullish confluence
         signal[(def_mask) & (confluence <= -0.5)] = Signal.SELL.value  # Strong bearish confluence
 
-        # Calculate confidence
-        # Base confidence from confluence strength
-        base_confidence = np.abs(confluence)
+        # Calculate confidence using 4-component system
+        # Component 1: Threshold margin (40% weight)
+        # How far past the trigger threshold did we go?
+        threshold_margin = np.zeros(n)
 
-        # Boost confidence when regime and signal align
-        regime_boost = np.where(
-            regime_conf > 0.5,
-            0.1 * regime_conf,  # Up to 10% boost for high regime confidence
-            0
+        # For trend-following BUY signals (confluence >= 0.15)
+        tf_buy_mask = (trend_mask) & np.isin(signal, [Signal.BUY.value, Signal.STRONG_BUY.value])
+        threshold_margin[tf_buy_mask] = np.clip((confluence[tf_buy_mask] - 0.15) / 0.52, 0, 1)  # 0.67 - 0.15 = 0.52 max
+
+        # For trend-following SELL signals (confluence <= -0.15)
+        tf_sell_mask = (trend_mask) & np.isin(signal, [Signal.SELL.value, Signal.STRONG_SELL.value])
+        threshold_margin[tf_sell_mask] = np.clip((np.abs(confluence[tf_sell_mask]) - 0.15) / 0.52, 0, 1)
+
+        # For mean-reversion BUY signals (confluence <= -0.15, buying the dip)
+        mr_buy_mask = (mr_mask) & np.isin(signal, [Signal.BUY.value, Signal.STRONG_BUY.value])
+        threshold_margin[mr_buy_mask] = np.clip((np.abs(confluence[mr_buy_mask]) - 0.15) / 0.52, 0, 1)
+
+        # For mean-reversion SELL signals (confluence >= 0.25, fading bullishness)
+        mr_sell_mask = (mr_mask) & np.isin(signal, [Signal.SELL.value, Signal.STRONG_SELL.value])
+        threshold_margin[mr_sell_mask] = np.clip((confluence[mr_sell_mask] - 0.25) / 0.42, 0, 1)
+
+        # Component 2: RSI extremity (30% weight)
+        # More extreme RSI = higher confidence for mean-reversion
+        rsi_extremity = np.zeros(n)
+        if 'RSI' in self.data.columns:
+            rsi = self.data['RSI'].values
+            # For oversold (RSI < 30): lower RSI = higher extremity
+            oversold_mask = rsi < 30
+            rsi_extremity[oversold_mask] = np.clip((30 - rsi[oversold_mask]) / 30, 0, 1)
+            # For overbought (RSI > 70): higher RSI = higher extremity
+            overbought_mask = rsi > 70
+            rsi_extremity[overbought_mask] = np.clip((rsi[overbought_mask] - 70) / 30, 0, 1)
+
+        # Component 3: Regime alignment (20% weight)
+        regime_alignment = regime_conf  # Already 0-1
+
+        # Component 4: Base floor (10% weight)
+        # Every triggered signal gets minimum confidence
+        base_floor = np.where(signal != Signal.HOLD.value, 1.0, 0.0)
+
+        # Combine components with weights
+        confidence = (
+            0.40 * threshold_margin +
+            0.30 * rsi_extremity +
+            0.20 * regime_alignment +
+            0.10 * base_floor
         )
 
-        # Reduce confidence in defensive mode
+        # Reduce confidence in defensive mode (more uncertainty)
         strategy_modifier = np.where(
             strategy == Strategy.DEFENSIVE.value,
             0.7,  # 30% reduction in defensive mode
             1.0
         )
 
-        confidence = np.clip(base_confidence + regime_boost, 0, 1) * strategy_modifier
+        confidence = np.clip(confidence * strategy_modifier, 0, 1)
 
         self.data['Signal'] = signal
         self.data['Signal_Confidence'] = confidence
@@ -607,9 +661,7 @@ class SignalGenerator:
             'avg_confidence': float(self.data['Signal_Confidence'].mean()),
             'strategy_distribution': {str(k): int(v) for k, v in self.data['Strategy'].value_counts().items()}
         }
-
         return stats
-
 
 # =============================================================================
 # TEST SCRIPT

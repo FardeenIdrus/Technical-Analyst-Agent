@@ -1,4 +1,5 @@
 """
+#version 2
 LLM Agent Module - AI-Powered Trading Analysis
 
 Advanced Claude API integration for intelligent trade analysis:
@@ -83,8 +84,18 @@ class TradeRecommendation:
     catalysts: List[str]
     time_horizon: str  # "intraday", "swing", "position"
 
+    # New fields for enhanced analysis
+    technical_analysis_summary: str = ""
+    target_1: Optional[float] = None
+    target_2: Optional[float] = None
+    target_3: Optional[float] = None
+    scenarios: Optional[Dict[str, Any]] = None
+    investment_thesis: str = ""
+    support_levels: Optional[List[float]] = None
+    resistance_levels: Optional[List[float]] = None
+
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             'recommendation': self.recommendation.value,
             'confidence': self.confidence,
             'rationale': self.rationale,
@@ -95,8 +106,21 @@ class TradeRecommendation:
             'risk_reward_ratio': self.risk_reward_ratio,
             'risks': self.risks,
             'catalysts': self.catalysts,
-            'time_horizon': self.time_horizon
+            'time_horizon': self.time_horizon,
+            'technical_analysis_summary': self.technical_analysis_summary,
+            'investment_thesis': self.investment_thesis
         }
+        if self.target_1 is not None:
+            result['target_1'] = self.target_1
+            result['target_2'] = self.target_2
+            result['target_3'] = self.target_3
+        if self.scenarios is not None:
+            result['scenarios'] = self.scenarios
+        if self.support_levels:
+            result['support_levels'] = self.support_levels
+        if self.resistance_levels:
+            result['resistance_levels'] = self.resistance_levels
+        return result
 
 
 @dataclass
@@ -221,6 +245,24 @@ class AnalysisContext:
     trading_days: Optional[int] = None
     years: Optional[float] = None
 
+    # === COMPONENT SCORES (0-100 scale) ===
+    momentum_score: Optional[float] = None
+    trend_score: Optional[float] = None
+    volatility_score: Optional[float] = None
+    volume_score: Optional[float] = None
+    overall_score: Optional[float] = None
+
+    # === ADDITIONAL TECHNICAL LEVELS ===
+    bb_upper: Optional[float] = None
+    bb_lower: Optional[float] = None
+    bb_middle: Optional[float] = None
+    volume_ratio: Optional[float] = None  # Current volume / average volume
+
+    # === MULTI-TARGET LEVELS ===
+    target_1: Optional[float] = None  # Conservative target
+    target_2: Optional[float] = None  # Base case target
+    target_3: Optional[float] = None  # Aggressive target
+
     def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in self.__dict__.items() if v is not None}
 
@@ -319,7 +361,7 @@ class LLMAgent:
     """
 
     # System prompts for different analysis types
-    TRADE_ANALYSIS_PROMPT = """You are a senior quantitative analyst at a hedge fund writing an investment memo.
+    TRADE_ANALYSIS_PROMPT = """You are a senior quantitative analyst at Goldman Sachs Asset Management writing an institutional trade note.
 
 CRITICAL CONSTRAINT:
 The quantitative signal system has already generated a recommendation: {signal}
@@ -350,29 +392,29 @@ ANALYSIS FRAMEWORK:
 
 4. Risk Assessment
    - Identify 3-5 specific risks that could invalidate this signal
+   - Format each risk as: "[Risk description]; mitigation through [specific action]"
    - Key support/resistance levels to watch
    - What price action would cause an early exit?
-   - Maximum acceptable drawdown for this trade
 
 5. Trade Specification (required for BUY/SELL, optional for HOLD)
-   - Entry price with reasoning (current price, limit order level, etc.)
+   - Entry price with reasoning
    - Stop loss level based on ATR or key technical support
-   - Take profit target based on ATR or key resistance
+   - Three take profit targets: conservative (T1), base case (T2), aggressive (T3)
    - Position size recommendation based on current volatility regime
-   - Risk/reward ratio and whether it meets minimum threshold (>2:1 preferred)
+   - Risk/reward ratio
 
-6. Scenario Analysis
-   - Bull case: What needs to happen for maximum profit? Target price?
-   - Base case: Most likely outcome given current conditions
-   - Bear case: What could go wrong? Where is the invalidation point?
+6. Scenario Analysis (WITH PROBABILITIES)
+   - Bull case (20-40% probability): Target price, % return, key drivers
+   - Base case (40-50% probability): Target price, % return, key drivers
+   - Bear case (20-35% probability): Target price, % return (negative), key drivers
+   - Calculate expected value: weighted average of scenario returns
+
+7. Investment Thesis (2-3 sentences)
+   - Synthesize why this {signal} is compelling at current levels
+   - What makes this an institutional-quality opportunity?
 
 CHAIN OF THOUGHT:
-Provide detailed reasoning in your rationale, not just conclusions:
-- "The signal system generated {signal} because the confluence score of {confluence:.2f} indicates..."
-- "RSI at [value] is [overbought/oversold/neutral], which in a [regime] regime suggests..."
-- "MACD histogram is [positive/negative] with [crossover status], which [supports/conflicts] because..."
-- "Despite [any conflicts], the signal remains {signal} because [key reasons]..."
-- "The primary risks to this trade are [specific risks] which would be triggered if [conditions]..."
+Provide detailed reasoning in your rationale, not just conclusions.
 
 OUTPUT FORMAT:
 Provide your analysis in this exact JSON structure:
@@ -380,22 +422,42 @@ Provide your analysis in this exact JSON structure:
     "recommendation": "{signal}",
     "confidence": {confidence},
     "rationale": "Comprehensive 4-6 sentence explanation covering: (1) why the signal was generated, (2) key supporting indicators, (3) regime context, (4) any conflicts and why they were outweighed",
+    "technical_analysis_summary": "4-6 sentence institutional-quality narrative explaining the complete technical picture. Example style: 'XYZ technical structure reveals a stock in [oversold/overbought] territory while maintaining [support/resistance] integrity... Price action at $X sits Y% [above/below] the Bollinger Band middle... The momentum complex shows [readings]... ADX at Z indicates [trend strength]...'",
     "entry_price": float,
     "stop_loss": float,
     "take_profit": float,
+    "target_1": float,
+    "target_2": float,
+    "target_3": float,
     "position_size_pct": 0.0-1.0,
     "risk_reward_ratio": float,
-    "risks": ["Specific risk 1 with trigger condition", "Specific risk 2 with trigger condition", "Specific risk 3 with trigger condition"],
-    "catalysts": ["Potential bullish catalyst", "Potential bearish catalyst"],
+    "risks": ["Risk 1 with trigger; mitigation through X", "Risk 2 with trigger; mitigation through Y", "Risk 3", "Risk 4"],
+    "catalysts": ["Bullish catalyst 1", "Bullish catalyst 2", "Bearish catalyst 1", "Bearish catalyst 2"],
     "time_horizon": "intraday|swing|position",
-    "conflicting_indicators": ["Indicator 1: reason it conflicts", "Indicator 2: reason it conflicts"],
     "support_levels": [nearest_support_price, secondary_support_price],
     "resistance_levels": [nearest_resistance_price, secondary_resistance_price],
     "scenarios": {{
-        "bull_case": "Description and target price",
-        "base_case": "Most likely outcome",
-        "bear_case": "What could go wrong and invalidation level"
-    }}
+        "bull_case": {{
+            "probability": 0.25-0.35,
+            "target_price": float,
+            "return_pct": float,
+            "drivers": ["driver 1", "driver 2"]
+        }},
+        "base_case": {{
+            "probability": 0.40-0.50,
+            "target_price": float,
+            "return_pct": float,
+            "drivers": ["driver 1", "driver 2"]
+        }},
+        "bear_case": {{
+            "probability": 0.20-0.30,
+            "target_price": float,
+            "return_pct": float,
+            "drivers": ["driver 1", "driver 2"]
+        }},
+        "expected_value_pct": float
+    }},
+    "investment_thesis": "2-3 sentence synthesis of why this {signal} is compelling at current levels and what makes it institutional-quality"
 }}"""
 
     PERFORMANCE_ANALYSIS_PROMPT = """You are a senior portfolio manager reviewing strategy performance.
@@ -780,6 +842,16 @@ Provide your analysis following the chain-of-thought framework and output in JSO
             risk_reward = data.get('risk_reward_ratio') or 2.0
             confidence = data.get('confidence') or 0.5
 
+            # Extract new fields with defaults
+            technical_summary = data.get('technical_analysis_summary', '')
+            investment_thesis = data.get('investment_thesis', '')
+            scenarios = data.get('scenarios', None)
+            target_1 = data.get('target_1') or context.target_1
+            target_2 = data.get('target_2') or context.target_2
+            target_3 = data.get('target_3') or context.target_3
+            support_levels = data.get('support_levels', [])
+            resistance_levels = data.get('resistance_levels', [])
+
             return TradeRecommendation(
                 recommendation=rec_map.get(data.get('recommendation', 'HOLD'), Recommendation.HOLD),
                 confidence=float(confidence),
@@ -791,7 +863,15 @@ Provide your analysis following the chain-of-thought framework and output in JSO
                 risk_reward_ratio=float(risk_reward),
                 risks=data.get('risks', []),
                 catalysts=data.get('catalysts', []),
-                time_horizon=data.get('time_horizon', 'swing')
+                time_horizon=data.get('time_horizon', 'swing'),
+                technical_analysis_summary=technical_summary,
+                target_1=float(target_1) if target_1 else None,
+                target_2=float(target_2) if target_2 else None,
+                target_3=float(target_3) if target_3 else None,
+                scenarios=scenarios,
+                investment_thesis=investment_thesis,
+                support_levels=support_levels,
+                resistance_levels=resistance_levels
             )
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
@@ -1137,6 +1217,53 @@ Strengths:
             "risk_factors": recommendation.risks,
             "catalysts": recommendation.catalysts
         }
+
+        # Add enhanced analysis fields
+        if recommendation.technical_analysis_summary:
+            output["technical_analysis"]["summary"] = recommendation.technical_analysis_summary
+
+        if recommendation.investment_thesis:
+            output["investment_thesis"] = recommendation.investment_thesis
+
+        # Add multi-target price levels
+        if recommendation.target_1 is not None:
+            output["trade_specifications"]["target_1"] = recommendation.target_1
+            output["trade_specifications"]["target_2"] = recommendation.target_2
+            output["trade_specifications"]["target_3"] = recommendation.target_3
+            output["trade_specifications"]["target_1_pct"] = (recommendation.target_1 / recommendation.entry_price - 1) * 100
+            output["trade_specifications"]["target_2_pct"] = (recommendation.target_2 / recommendation.entry_price - 1) * 100
+            output["trade_specifications"]["target_3_pct"] = (recommendation.target_3 / recommendation.entry_price - 1) * 100
+
+        # Add scenario analysis
+        if recommendation.scenarios:
+            output["scenario_analysis"] = recommendation.scenarios
+
+        # Add support/resistance levels
+        if recommendation.support_levels:
+            output["key_levels"] = {
+                "support": recommendation.support_levels,
+                "resistance": recommendation.resistance_levels
+            }
+
+        # Add component scores if available
+        if context.overall_score is not None:
+            output["component_scores"] = {
+                "overall": context.overall_score,
+                "momentum": context.momentum_score,
+                "trend": context.trend_score,
+                "volatility": context.volatility_score,
+                "volume": context.volume_score
+            }
+
+        # Add additional technical levels
+        if context.bb_upper is not None:
+            output["technical_analysis"]["levels"] = {
+                "bb_upper": context.bb_upper,
+                "bb_middle": context.bb_middle,
+                "bb_lower": context.bb_lower
+            }
+            if context.volume_ratio is not None:
+                output["technical_analysis"]["volume_ratio"] = context.volume_ratio
 
         # Add performance analysis if available
         if performance:
@@ -1505,6 +1632,113 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         content.append(Spacer(1, 15))
         content.append(Paragraph(f"<b>Rationale:</b> {rec['rationale']}", body_style))
 
+        # Investment Thesis (if available)
+        if 'investment_thesis' in json_data and json_data['investment_thesis']:
+            content.append(Spacer(1, 10))
+            content.append(Paragraph(f"<b>Investment Thesis:</b> {json_data['investment_thesis']}", body_style))
+
+        # Technical Analysis Summary (narrative paragraph - if available)
+        tech_summary = json_data.get('technical_analysis', {}).get('summary', '')
+        if tech_summary:
+            content.append(Spacer(1, 15))
+            content.append(Paragraph("TECHNICAL ANALYSIS SUMMARY", section_style))
+            content.append(Paragraph(tech_summary, body_style))
+
+        # Component Scores (if available)
+        if 'component_scores' in json_data:
+            scores = json_data['component_scores']
+            content.append(Spacer(1, 15))
+            content.append(Paragraph("COMPONENT SCORES", section_style))
+
+            # Score color helper
+            def get_score_color(score):
+                if score >= 70:
+                    return colors.HexColor('#22543d')  # Green
+                elif score >= 50:
+                    return colors.HexColor('#744210')  # Yellow/Orange
+                else:
+                    return colors.HexColor('#9b2c2c')  # Red
+
+            scores_data = [
+                ['Component', 'Score', 'Assessment'],
+                ['Momentum', f"{scores.get('momentum', 0):.0f}/100", 'Strong' if scores.get('momentum', 0) >= 70 else 'Moderate' if scores.get('momentum', 0) >= 50 else 'Weak'],
+                ['Trend', f"{scores.get('trend', 0):.0f}/100", 'Strong' if scores.get('trend', 0) >= 70 else 'Moderate' if scores.get('trend', 0) >= 50 else 'Weak'],
+                ['Volatility', f"{scores.get('volatility', 0):.0f}/100", 'Favorable' if scores.get('volatility', 0) >= 70 else 'Moderate' if scores.get('volatility', 0) >= 50 else 'Elevated'],
+                ['Volume', f"{scores.get('volume', 0):.0f}/100", 'Strong' if scores.get('volume', 0) >= 70 else 'Average' if scores.get('volume', 0) >= 50 else 'Weak'],
+                ['Overall', f"{scores.get('overall', 0):.0f}/100", 'Bullish' if scores.get('overall', 0) >= 70 else 'Neutral' if scores.get('overall', 0) >= 50 else 'Bearish']
+            ]
+
+            scores_table = Table(scores_data, colWidths=[1.5*inch, 1.5*inch, 2*inch])
+            scores_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a365d')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f7fafc')])
+            ]))
+            content.append(scores_table)
+
+        # Scenario Analysis (if available)
+        if 'scenario_analysis' in json_data:
+            scenarios = json_data['scenario_analysis']
+            content.append(Spacer(1, 15))
+            content.append(Paragraph("SCENARIO ANALYSIS", section_style))
+
+            # Bull Case
+            if 'bull_case' in scenarios:
+                bull = scenarios['bull_case']
+                content.append(Paragraph(
+                    f"<b>Bull Case ({bull.get('probability', 0):.0%} probability):</b> "
+                    f"Target ${bull.get('target_price', 0):,.2f} ({bull.get('return_pct', 0):+.1f}%)",
+                    body_style
+                ))
+                drivers = bull.get('drivers', [])
+                if drivers:
+                    content.append(Paragraph(f"<i>Drivers: {', '.join(drivers)}</i>",
+                        ParagraphStyle('DriversStyle', parent=body_style, fontSize=9, textColor=colors.HexColor('#4a5568'))))
+
+            # Base Case
+            if 'base_case' in scenarios:
+                base = scenarios['base_case']
+                content.append(Spacer(1, 5))
+                content.append(Paragraph(
+                    f"<b>Base Case ({base.get('probability', 0):.0%} probability):</b> "
+                    f"Target ${base.get('target_price', 0):,.2f} ({base.get('return_pct', 0):+.1f}%)",
+                    body_style
+                ))
+                drivers = base.get('drivers', [])
+                if drivers:
+                    content.append(Paragraph(f"<i>Drivers: {', '.join(drivers)}</i>",
+                        ParagraphStyle('DriversStyle', parent=body_style, fontSize=9, textColor=colors.HexColor('#4a5568'))))
+
+            # Bear Case
+            if 'bear_case' in scenarios:
+                bear = scenarios['bear_case']
+                content.append(Spacer(1, 5))
+                content.append(Paragraph(
+                    f"<b>Bear Case ({bear.get('probability', 0):.0%} probability):</b> "
+                    f"Target ${bear.get('target_price', 0):,.2f} ({bear.get('return_pct', 0):+.1f}%)",
+                    body_style
+                ))
+                drivers = bear.get('drivers', [])
+                if drivers:
+                    content.append(Paragraph(f"<i>Drivers: {', '.join(drivers)}</i>",
+                        ParagraphStyle('DriversStyle', parent=body_style, fontSize=9, textColor=colors.HexColor('#4a5568'))))
+
+            # Expected Value
+            if 'expected_value_pct' in scenarios:
+                content.append(Spacer(1, 10))
+                ev = scenarios['expected_value_pct']
+                ev_color = colors.HexColor('#22543d') if ev > 0 else colors.HexColor('#9b2c2c')
+                content.append(Paragraph(
+                    f"<b>Probability-Weighted Expected Value: {ev:+.2f}%</b>",
+                    ParagraphStyle('EVStyle', parent=body_style, textColor=ev_color, fontSize=11)
+                ))
+
         # Trade Specifications
         content.append(Paragraph("TRADE SPECIFICATIONS", section_style))
 
@@ -1516,6 +1750,20 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
             ['Position Size', f"{specs['position_size_pct']:.0%} of portfolio"],
             ['Risk/Reward', f"1:{specs['risk_reward_ratio']:.1f}"]
         ]
+
+        # Add multi-target levels if available
+        if specs.get('target_1') is not None:
+            entry = specs['entry_price']
+            t1_pct = ((specs['target_1'] / entry) - 1) * 100
+            spec_data.append(['Target 1 (T1)', f"${specs['target_1']:,.2f} ({t1_pct:+.1f}%)"])
+        if specs.get('target_2') is not None:
+            entry = specs['entry_price']
+            t2_pct = ((specs['target_2'] / entry) - 1) * 100
+            spec_data.append(['Target 2 (T2)', f"${specs['target_2']:,.2f} ({t2_pct:+.1f}%)"])
+        if specs.get('target_3') is not None:
+            entry = specs['entry_price']
+            t3_pct = ((specs['target_3'] / entry) - 1) * 100
+            spec_data.append(['Target 3 (T3)', f"${specs['target_3']:,.2f} ({t3_pct:+.1f}%)"])
 
         spec_table = Table(spec_data, colWidths=[2*inch, 3*inch])
         spec_table.setStyle(TableStyle([
@@ -1942,6 +2190,153 @@ Be concise and technical."""
 # HELPER FUNCTIONS
 # =============================================================================
 
+def calculate_component_scores(data: pd.DataFrame) -> Dict[str, float]:
+    """
+    Calculate component scores (0-100) for different technical indicator families.
+
+    Scoring methodology:
+    - Momentum: RSI position (oversold=high score for buy), MACD histogram direction
+    - Trend: ADX strength, price vs SMAs alignment
+    - Volatility: BB %B position, ATR percentile
+    - Volume: Volume ratio vs average
+
+    Returns:
+        Dictionary with momentum_score, trend_score, volatility_score, volume_score, overall_score
+    """
+    latest = data.iloc[-1]
+
+    # === MOMENTUM SCORE (0-100) ===
+    # RSI: Oversold (<30) = bullish = high score, Overbought (>70) = bearish = low score
+    rsi = float(latest.get('RSI', 50))
+    if rsi <= 30:
+        rsi_score = 80 + (30 - rsi) * 0.67  # 80-100 for oversold
+    elif rsi >= 70:
+        rsi_score = 20 - (rsi - 70) * 0.67  # 0-20 for overbought
+    else:
+        rsi_score = 50 + (50 - rsi) * 0.75  # 20-80 for neutral zone
+    rsi_score = max(0, min(100, rsi_score))
+
+    # MACD histogram: Positive = bullish, negative = bearish
+    macd = float(latest.get('MACD', 0))
+    macd_signal = float(latest.get('MACD_Signal', 0))
+    macd_hist = macd - macd_signal
+    # Normalize based on typical range
+    macd_score = 50 + min(50, max(-50, macd_hist * 10))
+
+    momentum_score = (rsi_score * 0.6 + macd_score * 0.4)
+
+    # === TREND SCORE (0-100) ===
+    # ADX: >25 = strong trend = higher score
+    adx = float(latest.get('ADX', 25))
+    adx_score = min(100, adx * 2.5)  # ADX 40+ = 100
+
+    # Price vs SMAs: Above both = bullish = high score
+    price = float(latest['Close'])
+    sma_50 = float(latest.get('SMA_50', price))
+    sma_200 = float(latest.get('SMA_200', price))
+
+    sma_score = 50
+    if price > sma_50 and price > sma_200:
+        sma_score = 75 + min(25, ((price / sma_200) - 1) * 100)  # 75-100
+    elif price > sma_50:
+        sma_score = 60  # Above 50, below 200
+    elif price > sma_200:
+        sma_score = 40  # Below 50, above 200
+    else:
+        sma_score = 25 - min(25, (1 - (price / sma_200)) * 100)  # 0-25
+    sma_score = max(0, min(100, sma_score))
+
+    trend_score = (adx_score * 0.4 + sma_score * 0.6)
+
+    # === VOLATILITY SCORE (0-100) ===
+    # BB %B: Near 0 = oversold (opportunity), near 1 = overbought
+    bb_pct_b = float(latest.get('BB_Percent_B', 0.5))
+    if bb_pct_b <= 0.2:
+        vol_bb_score = 80 + (0.2 - bb_pct_b) * 100  # High score for oversold
+    elif bb_pct_b >= 0.8:
+        vol_bb_score = 20 - (bb_pct_b - 0.8) * 100  # Low score for overbought
+    else:
+        vol_bb_score = 50  # Neutral
+    vol_bb_score = max(0, min(100, vol_bb_score))
+
+    # ATR as % of price - lower is generally better for stability
+    atr = float(latest.get('ATR', 0))
+    atr_pct = (atr / price * 100) if price > 0 else 0
+    atr_score = max(0, min(100, 100 - atr_pct * 20))  # Lower ATR% = higher score
+
+    volatility_score = (vol_bb_score * 0.6 + atr_score * 0.4)
+
+    # === VOLUME SCORE (0-100) ===
+    volume = float(latest.get('Volume', 0))
+    volume_ma = float(latest.get('Volume_MA', volume)) if latest.get('Volume_MA') else volume
+
+    if volume_ma > 0:
+        volume_ratio = volume / volume_ma
+        # Volume above average = confirmation = higher score
+        volume_score = min(100, 50 + (volume_ratio - 1) * 50)
+    else:
+        volume_score = 50
+    volume_score = max(0, min(100, volume_score))
+
+    # === OVERALL SCORE ===
+    # Weighted average
+    overall_score = (
+        momentum_score * 0.30 +
+        trend_score * 0.30 +
+        volatility_score * 0.20 +
+        volume_score * 0.20
+    )
+
+    return {
+        'momentum_score': round(momentum_score, 1),
+        'trend_score': round(trend_score, 1),
+        'volatility_score': round(volatility_score, 1),
+        'volume_score': round(volume_score, 1),
+        'overall_score': round(overall_score, 1)
+    }
+
+
+def calculate_price_targets(data: pd.DataFrame) -> Dict[str, float]:
+    """
+    Calculate multi-target price levels based on technical indicators.
+
+    Target levels:
+    - Target 1 (Conservative): BB middle or nearest resistance
+    - Target 2 (Base case): BB upper or 1.5x ATR
+    - Target 3 (Aggressive): 2x ATR or prior swing high
+    - Stop Loss: BB lower or 1x ATR below
+
+    Returns:
+        Dictionary with target_1, target_2, target_3, suggested_stop
+    """
+    latest = data.iloc[-1]
+    price = float(latest['Close'])
+    atr = float(latest.get('ATR', price * 0.02))  # Default 2% if no ATR
+
+    # Get Bollinger Band levels
+    bb_upper = float(latest.get('BB_Upper', price * 1.02))
+    bb_middle = float(latest.get('BB_Middle', price))
+    bb_lower = float(latest.get('BB_Lower', price * 0.98))
+
+    # Calculate targets
+    target_1 = bb_middle if bb_middle > price else price + atr  # Conservative
+    target_2 = bb_upper if bb_upper > price else price + 1.5 * atr  # Base case
+    target_3 = price + 2 * atr  # Aggressive
+
+    # Suggested stop
+    suggested_stop = max(bb_lower, price - 1.5 * atr)
+
+    return {
+        'target_1': round(target_1, 2),
+        'target_2': round(target_2, 2),
+        'target_3': round(target_3, 2),
+        'suggested_stop': round(suggested_stop, 2),
+        'bb_upper': round(bb_upper, 2),
+        'bb_middle': round(bb_middle, 2),
+        'bb_lower': round(bb_lower, 2)
+    }
+
+
 def create_context_from_data(
     data: pd.DataFrame,
     ticker: str = "UNKNOWN",
@@ -2106,6 +2501,38 @@ def create_context_from_data(
                 context.vol_adjusted_size = position_sizer.target_volatility / garch_vol.get('annualized_volatility', 1.0) if garch_vol.get('annualized_volatility') else None
             except:
                 pass
+
+    # === ADD COMPONENT SCORES ===
+    try:
+        scores = calculate_component_scores(data)
+        context.momentum_score = scores['momentum_score']
+        context.trend_score = scores['trend_score']
+        context.volatility_score = scores['volatility_score']
+        context.volume_score = scores['volume_score']
+        context.overall_score = scores['overall_score']
+    except Exception as e:
+        pass  # Scores remain None if calculation fails
+
+    # === ADD PRICE TARGETS AND BB LEVELS ===
+    try:
+        targets = calculate_price_targets(data)
+        context.target_1 = targets['target_1']
+        context.target_2 = targets['target_2']
+        context.target_3 = targets['target_3']
+        context.bb_upper = targets['bb_upper']
+        context.bb_middle = targets['bb_middle']
+        context.bb_lower = targets['bb_lower']
+    except Exception as e:
+        pass  # Targets remain None if calculation fails
+
+    # === ADD VOLUME RATIO ===
+    try:
+        volume = float(latest.get('Volume', 0))
+        volume_ma = float(latest.get('Volume_MA', volume)) if latest.get('Volume_MA') else volume
+        if volume_ma > 0:
+            context.volume_ratio = round(volume / volume_ma, 2)
+    except:
+        pass
 
     return context
 
