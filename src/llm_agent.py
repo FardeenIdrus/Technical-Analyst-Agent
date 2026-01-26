@@ -2557,10 +2557,13 @@ if __name__ == "__main__":
     print("LLM AGENT TEST")
     print("=" * 70)
 
+    # Configuration - change ticker here
+    TICKER = 'NVDA'
+
     # Load and process data
     print("\nLoading data...")
     collector = DataCollector()
-    data = collector.get_data('AAPL', years=10)
+    data = collector.get_data(TICKER, years=10)
 
     print("Processing indicators...")
     ti = TechnicalIndicators(data)
@@ -2599,7 +2602,7 @@ if __name__ == "__main__":
     print("\nCreating analysis context...")
     context = create_context_from_data(
         data,
-        ticker='AAPL',
+        ticker=TICKER,
         performance_report=report,
         mc_result=mc_result,
         position_sizer=engine.position_sizer
