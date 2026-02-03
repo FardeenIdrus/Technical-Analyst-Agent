@@ -2558,7 +2558,7 @@ if __name__ == "__main__":
     print("=" * 70)
 
     # Configuration - change ticker here
-    TICKER = 'NVDA'
+    TICKER = 'AAPL'
 
     # Load and process data
     print("\nLoading data...")
